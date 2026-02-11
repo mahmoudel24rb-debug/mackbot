@@ -1,0 +1,11 @@
+PROXY_HOST = "127.0.0.1"
+PROXY_PORT = 5555
+
+SERVER_HOST = "34.247.205.111"
+SERVER_PORT = 5555
+
+# Port for the auto-started game server proxy
+GAME_PROXY_PORT = 5556
+
+VERBOSE = True
+HEX_DUMP_MAX_BYTES = 128
