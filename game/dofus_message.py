@@ -56,9 +56,9 @@ TYPE_URL_NAMES = {
     "iny": "CurrentCellId",
     "hjd": "MapLoaded",
 
-    # Entities on map
-    "jlm": "MapPlayersInfo",
-    "jml": "MapFriendsInfo",
+    # Social / Friends
+    "jlm": "AcquaintanceList",
+    "jml": "FriendsOnlineList",
 
     # Movement
     "hqn": "MoveRequest",

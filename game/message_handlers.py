@@ -242,43 +242,34 @@ def handle_map_info(state, data, direction, uid):
 
 
 # ---------------------------------------------------------------------------
-# Map Players (jlm)
+# Acquaintance List (jlm) - Friends/contacts online
 # ---------------------------------------------------------------------------
-# field 1 (message): repeated PlayerInfo
-#   field 1 (bytes): player data (contains name, level)
+# field 1 (message): repeated AcquaintanceInfo
+#   field 1 (bytes): player data (contains name, tag)
 #   field 2 (varint): player_id
-#   field 4 (varint): cell_id
+#   field 4 (varint): level or position
+#   field 7 (varint): status (-1 = unknown)
 
-def handle_map_players(state, data, direction, uid):
-    """Parse MapPlayersInfo - players currently on the map."""
+def handle_acquaintance_list(state, data, direction, uid):
+    """Parse AcquaintanceList - online friends/contacts (NOT players on map)."""
     if direction != "s2c":
         return
     fields = _decode(data)
-    players = _get_all_fields(fields, 1, WIRE_LENGTH_DELIMITED)
+    friends = _get_all_fields(fields, 1, WIRE_LENGTH_DELIMITED)
 
-    for player_data in players:
-        p_fields = _decode(player_data)
-        player_id = _get_varint(p_fields, 2)
-        cell_id = _get_varint(p_fields, 4)
-
-        # Player name is inside field 1 (bytes) - nested protobuf
+    names = []
+    for friend_data in friends:
+        f_fields = _decode(friend_data)
+        info_bytes = _get_field(f_fields, 1, WIRE_LENGTH_DELIMITED)
         name = None
-        info_bytes = _get_field(p_fields, 1, WIRE_LENGTH_DELIMITED)
         if info_bytes:
             info_fields = _decode(info_bytes)
             name = _get_string(info_fields, 2)
+        if name:
+            names.append(name)
 
-        if player_id:
-            from game.state import Entity
-            entity = Entity(entity_id=player_id, name=name, cell_id=cell_id)
-            entity.entity_type = "player"
-            state.entities[player_id] = entity
-
-    if players:
-        names = [state.entities[pid].name or str(pid)
-                 for pid in state.entities
-                 if state.entities[pid].entity_type == "player"]
-        logger.info(f"  -> Players on map: {', '.join(names[:10])}")
+    if names:
+        logger.info(f"  -> Friends online: {', '.join(names[:10])}")
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +391,7 @@ def register_all_handlers(game_state):
         "iaa": handle_map_coordinates,
         "iny": handle_current_cell,
         "hxl": handle_map_info,
-        "jlm": handle_map_players,
+        "jlm": handle_acquaintance_list,
         "hqo": handle_interactive_elements,
         "hwa": handle_spells,
         "ibe": handle_fight_start,
