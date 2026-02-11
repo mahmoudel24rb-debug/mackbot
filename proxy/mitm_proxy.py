@@ -24,6 +24,9 @@ from proxy.packet_handler import (
     WIRE_LENGTH_DELIMITED, WIRE_VARINT,
     _is_valid_protobuf,
 )
+from game.state import GameState
+from game.dofus_message import extract_message_info, get_type_name
+from game.message_handlers import register_all_handlers
 from utils import logger
 import config
 
@@ -326,6 +329,9 @@ class MITMProxy:
         # Populated when SelectServerResponse is detected
         self.game_server_host = None
         self.game_server_port = None
+        # Game state - tracks character, map, entities, etc.
+        self.game_state = GameState()
+        register_all_handlers(self.game_state)
 
     async def start(self):
         server = await asyncio.start_server(
@@ -410,6 +416,8 @@ class MITMProxy:
         for payload in c2s_buffer.try_extract_packets():
             self._log_packet(payload, "c2s", conn_id, conn_label)
             self._save_packet(payload, "c2s")
+            if conn_label == "GAME":
+                self._process_game_packet(payload, "c2s")
 
         # Per-connection state (shared between c2s and s2c tasks via dict)
         state = {"select_server_sent": False, "ssr_handled": False}
@@ -494,6 +502,10 @@ class MITMProxy:
             self._log_packet(payload, direction, conn_id, conn_label)
             self._save_packet(payload, direction)
 
+            # Feed game packets to the state parser
+            if conn_label == "GAME":
+                self._process_game_packet(payload, direction)
+
             # Detect SelectServer from client
             if (conn_label == "LOGIN" and direction == "c2s"
                     and not state["select_server_sent"]):
@@ -553,15 +565,31 @@ class MITMProxy:
 
         await writer.drain()
 
+    # --- Game State ---
+
+    def _process_game_packet(self, payload, direction):
+        """Extract type URL messages and feed them to the game state."""
+        messages = extract_message_info(payload, direction)
+        for type_code, msg_data, uid in messages:
+            self.game_state.process_message(type_code, msg_data, direction, uid)
+
     # --- Logging ---
 
     def _log_packet(self, payload, direction, conn_id, conn_label):
         msg_name, size, details = format_packet_info(payload, direction)
 
+        # For game packets, add type URL name
+        type_label = ""
+        if conn_label == "GAME":
+            messages = extract_message_info(payload, direction)
+            if messages:
+                names = [f"{get_type_name(code)}({code})" for code, _, _ in messages]
+                type_label = f" {' | '.join(names)}"
+
         if direction == "c2s":
-            logger.client_to_server(f"[{conn_label}] {msg_name}", size)
+            logger.client_to_server(f"[{conn_label}]{type_label}", size)
         else:
-            logger.server_to_client(f"[{conn_label}] {msg_name}", size)
+            logger.server_to_client(f"[{conn_label}]{type_label}", size)
 
         if config.VERBOSE and details:
             print(details)
