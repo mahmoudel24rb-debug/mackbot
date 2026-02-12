@@ -240,6 +240,11 @@ def handle_map_info(state, data, direction, uid):
     entity_count = len(entities)
     logger.info(f"  -> Map loaded: {entity_count} entities on map")
 
+    # Notify navigator that map changed (new map data arrived)
+    if hasattr(state, 'navigator') and state.navigator:
+        state.navigator.grid.clear()
+        state.navigator.movement.on_map_changed()
+
 
 # ---------------------------------------------------------------------------
 # Acquaintance List (jlm) - Friends/contacts online
@@ -376,24 +381,135 @@ def handle_fight_end(state, data, direction, uid):
 
 
 # ---------------------------------------------------------------------------
+# Movement Events
+# ---------------------------------------------------------------------------
+# MapMovementEvent (hxk) - server confirms/broadcasts movement
+# field 1 (varint): actor_id
+# field 2 (bytes): path data (compressed cells)
+
+def handle_movement_event(state, data, direction, uid):
+    """Parse MapMovementEvent - movement confirmed by server."""
+    if direction != "s2c":
+        return
+    fields = _decode(data)
+    actor_id = _get_varint(fields, 1)
+
+    # Log path data for reverse engineering
+    path_bytes = _get_field(fields, 2, WIRE_LENGTH_DELIMITED)
+    path_varints = _get_all_fields(fields, 2, WIRE_VARINT)
+
+    # Notify the movement controller
+    if hasattr(state, 'navigator') and state.navigator:
+        state.navigator.movement.on_movement_event()
+
+    cell_info = ""
+    if path_varints:
+        cells = [v & 0xFFF for v in path_varints]
+        cell_info = f" cells={cells}"
+    logger.info(f"  -> Movement: actor={actor_id}{cell_info}")
+
+
+# MapMovementRefusedEvent (hxn) - movement rejected
+def handle_movement_refused(state, data, direction, uid):
+    """Parse MapMovementRefused - server rejected movement."""
+    if direction != "s2c":
+        return
+
+    if hasattr(state, 'navigator') and state.navigator:
+        state.navigator.movement.on_movement_refused()
+
+    logger.warn(f"  -> Movement REFUSED")
+
+
+# MapMovementRequest (hqn) - client movement request (log outgoing)
+def handle_move_request(state, data, direction, uid):
+    """Log outgoing MapMovementRequest for debugging."""
+    if direction != "c2s":
+        return
+    fields = _decode(data)
+    path_vals = _get_all_fields(fields, 1, WIRE_VARINT)
+    if path_vals:
+        cells = [v & 0xFFF for v in path_vals]
+        dirs = [(v >> 12) & 0xF for v in path_vals]
+        logger.info(f"  -> MoveRequest: {len(path_vals)} keyframes, cells={cells}, dirs={dirs}")
+
+
+# MapCurrentEvent (hxm) - server tells us current map id
+def handle_map_current(state, data, direction, uid):
+    """Parse MapCurrentEvent - current map reference."""
+    if direction != "s2c":
+        return
+    fields = _decode(data)
+    map_id = _get_varint(fields, 1)
+    if map_id:
+        state.map.map_id = map_id
+        logger.info(f"  -> Map ID: {map_id}")
+
+
+# MapCellsData (gxu) - cell walkability data from server
+def handle_cells_data(state, data, direction, uid):
+    """Parse MapCellsData - cell walkability information."""
+    if direction != "s2c":
+        return
+    fields = _decode(data)
+
+    if not hasattr(state, 'navigator') or not state.navigator:
+        return
+
+    grid = state.navigator.grid
+    cell_count = 0
+
+    # Try to extract cell data - format TBD from packet captures
+    # Common patterns: repeated message with cellNumber + mov flag
+    cells = _get_all_fields(fields, 1, WIRE_LENGTH_DELIMITED)
+    for cell_data in cells:
+        c_fields = _decode(cell_data)
+        cell_num = _get_varint(c_fields, 1)
+        mov = _get_varint(c_fields, 2)
+        map_change = _get_varint(c_fields, 3)
+
+        if cell_num is not None and cell_num < 560:
+            if mov is not None:
+                grid.set_walkable(cell_num, mov != 0)
+            if map_change:
+                grid.map_change_data[cell_num] = map_change
+            cell_count += 1
+
+    if cell_count > 0:
+        walkable = sum(1 for w in grid.walkable if w)
+        logger.info(f"  -> Cells data: {cell_count} cells, {walkable} walkable")
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
 def register_all_handlers(game_state):
     """Register all known message handlers with the GameState."""
     handlers = {
+        # Character
         "jtl": handle_character_list,
         "jtb": handle_character_select,
         "jrl": handle_character_loaded,
         "jtx": handle_character_selected_info,
         "ktg": handle_character_appearance,
         "hdm": handle_character_stats,
+        # Map
         "iaa": handle_map_coordinates,
         "iny": handle_current_cell,
         "hxl": handle_map_info,
-        "jlm": handle_acquaintance_list,
+        "hxm": handle_map_current,
+        "gxu": handle_cells_data,
         "hqo": handle_interactive_elements,
+        # Movement
+        "hqn": handle_move_request,
+        "hxk": handle_movement_event,
+        "hxn": handle_movement_refused,
+        # Social
+        "jlm": handle_acquaintance_list,
+        # Spells
         "hwa": handle_spells,
+        # Fight
         "ibe": handle_fight_start,
     }
 

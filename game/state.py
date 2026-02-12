@@ -2,6 +2,7 @@
 Dofus 3 Game State - Tracks the current state of the game session.
 
 Updated by message handlers as packets flow through the proxy.
+Provides access to navigation (pathfinding + movement) via self.navigator.
 """
 
 from utils import logger
@@ -85,6 +86,7 @@ class GameState:
         self.entities = {}        # entity_id -> Entity
         self.in_fight = False
         self.connected = False
+        self.navigator = None     # set after import to avoid circular deps
         self._handlers = {}       # type_code -> handler function
         self._message_log = []    # recent messages for debugging
 

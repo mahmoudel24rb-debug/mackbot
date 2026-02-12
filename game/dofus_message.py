@@ -61,9 +61,15 @@ TYPE_URL_NAMES = {
     "jml": "FriendsOnlineList",
 
     # Movement
-    "hqn": "MoveRequest",
-    "hqu": "MoveConfirm",
-    "hqs": "MapChangeRequest",
+    "hqn": "MapMovementRequest",
+    "hqu": "MapMovementConfirm",
+    "hxk": "MapMovementEvent",
+    "hxn": "MapMovementRefused",
+    "hqs": "MapMovementCancel",
+    "hqc": "MapChangeRequest",
+    "hqr": "MapChangeOrientation",
+    "hxj": "MapChangeOrientationEvent",
+    "hxm": "MapCurrentEvent",
 
     # Spells
     "hwa": "SpellList",
@@ -123,8 +129,7 @@ TYPE_URL_NAMES = {
     "job": "GameContextRequest",
     "jnm": "PartyInfoRequest",
 
-    # Map movement
-    "hqr": "MapChangeConfirm",
+    # Map data
     "kpo": "PrestigeInfo",
     "jfj": "ShortcutBar",
 }

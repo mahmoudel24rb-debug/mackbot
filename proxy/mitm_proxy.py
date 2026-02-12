@@ -27,6 +27,7 @@ from proxy.packet_handler import (
 from game.state import GameState
 from game.dofus_message import extract_message_info, get_type_name
 from game.message_handlers import register_all_handlers
+from game.navigation import Navigator
 from utils import logger
 import config
 
@@ -331,6 +332,9 @@ class MITMProxy:
         self.game_server_port = None
         # Game state - tracks character, map, entities, etc.
         self.game_state = GameState()
+        # Navigator - pathfinding + movement (attached to game state)
+        self.navigator = Navigator(self.game_state)
+        self.game_state.navigator = self.navigator
         register_all_handlers(self.game_state)
 
     async def start(self):
@@ -402,6 +406,11 @@ class MITMProxy:
             logger.error(f"[{conn_label} #{conn_id}] Cannot connect to {target_host}:{target_port}: {e}")
             client_writer.close()
             return
+
+        # Give the navigator access to the game server writer
+        if conn_label == "GAME":
+            self.navigator.set_server_writer(server_writer)
+            logger.info(f"[#{conn_id}] Navigator connected - pathfinding & movement ready")
 
         # Forward the initial data to the server
         server_writer.write(first_data)
