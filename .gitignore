@@ -45,3 +45,7 @@ Spawn
 adjacent
 cd
 dofus2-ga-orukam.ankama-games.com
+
+# Large binary caches
+**/WebView2/
+*.exe
