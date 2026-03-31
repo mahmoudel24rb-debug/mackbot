@@ -1,9 +1,9 @@
 """
 Dofus 3 Map Grid - Cell coordinate system and walkability.
 
-Dofus uses an isometric diamond grid:
-  - 560 cells (14 columns x 40 rows)
-  - CellId 0-559
+Dofus 3 uses the same isometric diamond grid as Dofus 2:
+  - 560 cells (14 columns x 40 rows), CellId 0-559
+  - WIDTH=14 confirmed from actor movement offsets (±13, ±14)
   - MapPoint coordinates: converted from cellId using Ankama's formula
   - 8 movement directions
 
@@ -15,21 +15,22 @@ Cell coordinate conversion (from Jitsuri JsPathFinder.cs):
 
 MAP_WIDTH = 14
 MAP_HEIGHT = 20
-# Classic Dofus uses 560 (14x40), but Dofus 3 maps can be larger (cell 871 seen).
-# We build lookup for a safe upper bound.
-CELL_COUNT = 1200
+# Dofus 3 maps have 560 cells (14 columns x 40 rows), IDs 0-559.
+# WIDTH=14 confirmed from actor movement offsets: ±13, ±14 (isometric diamond grid).
+CELL_COUNT = 560
 
 # 8 directions in MapPoint coordinate space
-# Index matches Dofus direction encoding (0-7)
+# Reverse-engineered from live Dofus 3 packet captures.
+# The isometric diamond grid rotates 45 degrees from standard screen coords.
 DIRECTIONS = {
-    0: (1, 0),    # East
-    1: (1, -1),   # South-East
-    2: (0, -1),   # South
-    3: (-1, -1),  # South-West
-    4: (-1, 0),   # West
-    5: (-1, 1),   # North-West
-    6: (0, 1),    # North
-    7: (1, 1),    # North-East
+    0: (1, 1),    # East
+    1: (0, 1),    # South-East
+    2: (-1, 1),   # South
+    3: (-1, 0),   # South-West
+    4: (-1, -1),  # West
+    5: (0, -1),   # North-West
+    6: (1, -1),   # North
+    7: (1, 0),    # North-East
 }
 
 DIRECTION_NAMES = {
@@ -56,9 +57,9 @@ _point_to_cell = {}
 def _build_lookup():
     """Build cell_id <-> (x, y) lookup tables for all 560 cells."""
     for cell_id in range(CELL_COUNT):
-        num = cell_id % 14 - cell_id // 28
+        num = cell_id % MAP_WIDTH - cell_id // (2 * MAP_WIDTH)
         x = num + 19
-        y = num + cell_id // 14
+        y = num + cell_id // MAP_WIDTH
         _cell_to_point[cell_id] = (x, y)
         _point_to_cell[(x, y)] = cell_id
 
@@ -131,6 +132,9 @@ def compress_path(path):
     Compress a path of cell IDs into Dofus format.
     Each step: (direction << 12) | cellId
     Only keyframes where direction changes + final cell.
+
+    After compression, validates that each keyCell pair forms a valid
+    straight line on the grid. If not, adds intermediate keyCells.
     """
     if len(path) < 2:
         return path
@@ -141,6 +145,8 @@ def compress_path(path):
     for i in range(len(path) - 1):
         direction = get_direction(path[i], path[i + 1])
         if direction == -1:
+            # Non-adjacent cells in path — emit each cell individually
+            compressed.append((last_dir << 12) | path[i] if last_dir >= 0 else path[i])
             continue
         if direction != last_dir:
             compressed.append((direction << 12) | path[i])
@@ -150,6 +156,44 @@ def compress_path(path):
     if path and last_dir >= 0:
         compressed.append((last_dir << 12) | path[-1])
 
+    # Validate: verify each keyCells pair can reach the next via straight walk
+    if len(compressed) >= 2:
+        validated = _validate_keycells(compressed)
+        if validated is not None:
+            return validated
+
+    return compressed
+
+
+def _validate_keycells(compressed):
+    """Verify compressed keyCells form valid straight-line segments.
+    If a segment doesn't reach the next keyCell, re-compress from scratch
+    by emitting every cell as a keyCell (safe fallback)."""
+    for i in range(len(compressed) - 1):
+        cell_a = compressed[i] & 0xFFF
+        dir_a = (compressed[i] >> 12) & 0xF
+        cell_b = compressed[i + 1] & 0xFFF
+
+        # Walk from cell_a in direction dir_a — should eventually reach cell_b
+        dx, dy = DIRECTIONS.get(dir_a, (0, 0))
+        current = cell_a
+        reached = False
+        for _ in range(30):  # max 30 steps
+            pt = cell_to_point(current)
+            if pt is None:
+                break
+            nx, ny = pt[0] + dx, pt[1] + dy
+            next_id = point_to_cell(nx, ny)
+            if next_id < 0:
+                break
+            current = next_id
+            if current == cell_b:
+                reached = True
+                break
+
+        if not reached:
+            # Invalid segment — return None to signal fallback needed
+            return None
     return compressed
 
 

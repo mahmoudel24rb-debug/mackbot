@@ -1,0 +1,19 @@
+{
+    "name": "Exemple route récolte",
+    "profession": "bucheron",
+    "loop": true,
+    "steps": [
+        {
+            "map_id": 169083904,
+            "direction": "right",
+            "gather": true,
+            "resource_types": [114, 115]
+        },
+        {
+            "map_id": 169082880,
+            "direction": "bottom",
+            "gather": true,
+            "resource_types": [114, 115]
+        }
+    ]
+}

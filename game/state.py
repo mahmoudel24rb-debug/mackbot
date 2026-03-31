@@ -7,6 +7,34 @@ Provides access to navigation (pathfinding + movement) via self.navigator.
 
 from utils import logger
 from game.dofus_message import get_type_name
+from protocol.matching import Matching
+import config
+
+
+class Resource:
+    """A harvestable resource on the map."""
+    __slots__ = ("element_id", "cell_id", "skill_id", "skill_uid",
+                 "resource_type", "status", "enabled")
+
+    def __init__(self, element_id, cell_id=None, skill_id=None, skill_uid=None,
+                 resource_type=None, status=0, enabled=True):
+        self.element_id = element_id
+        self.cell_id = cell_id
+        self.skill_id = skill_id
+        self.skill_uid = skill_uid
+        self.resource_type = resource_type
+        self.status = status          # 0 = available
+        self.enabled = enabled
+
+    @property
+    def available(self):
+        # Protocol: status=1 means available (verified from live traffic 2026-03-26)
+        return self.status == 1 and self.enabled
+
+    def __repr__(self):
+        avail = "OK" if self.available else f"s{self.status}"
+        return (f"Resource(elem={self.element_id}, cell={self.cell_id}, "
+                f"type={self.resource_type}, skill={self.skill_uid}, {avail})")
 
 
 class Character:
@@ -46,7 +74,7 @@ class Stats:
 class MapInfo:
     """Current map information."""
     __slots__ = ("map_id", "x", "y", "actors", "interactive_elements",
-                 "stated_elements")
+                 "stated_elements", "resources")
 
     def __init__(self):
         self.map_id = None
@@ -55,6 +83,14 @@ class MapInfo:
         self.actors = []           # list of dicts
         self.interactive_elements = []
         self.stated_elements = []
+        self.resources = []        # list of Resource
+
+    def get_available_resources(self, resource_type=None):
+        """Get resources that are available to harvest."""
+        results = [r for r in self.resources if r.available]
+        if resource_type is not None:
+            results = [r for r in results if r.resource_type == resource_type]
+        return results
 
 
 class Entity:
@@ -84,15 +120,33 @@ class GameState:
         self.stats = Stats()
         self.map = MapInfo()
         self.entities = {}        # entity_id -> Entity
+        self.pos_ref = None       # position reference from iny (composite varint, constant per map)
         self.in_fight = False
+        self.is_busy = False      # True when gathering, crafting, etc.
+        self.busy_reason = None   # "gathering", "crafting", etc.
         self.connected = False
-        self.navigator = None     # set after import to avoid circular deps
-        self._handlers = {}       # type_code -> handler function
+        self.navigator = None        # set after import to avoid circular deps
+        self.gatherer = None         # set after import to avoid circular deps
+        self._fighter_manager = None # lazy-created by message_handlers on first fight event
+        self.spell_manager = None    # set after import to avoid circular deps
+        self.matching = Matching(getattr(config, "MATCHING_FILE", "data/matching.json"))
+        self._handlers = {}       # message_name -> handler function
         self._message_log = []    # recent messages for debugging
+        self._connect_time = None # timestamp when character loaded (for init filtering)
+        # Walkability learned by observing real client MoveRequests/MoveEvents
+        self._observed_walkable = {}  # mapId -> set of walkable cellIds
+        # Gather sequence flags
+        self.interaction_check_ok = False   # Set True when ite (InteractiveUseCheckResponse) arrives
+        self.last_harvest_complete = False  # Set True when kof (InteractiveUseEndedEvent) arrives
+        # IAL cell properties for walkability analysis
+        self.ial_cell_properties = {}  # cellId -> [f1_values]
 
-    def register_handler(self, type_code, handler):
-        """Register a handler function for a specific message type code."""
-        self._handlers[type_code] = handler
+    def register_handler(self, message_name, handler):
+        """
+        Register a handler for a stable message name (e.g. "MapMovementEvent").
+        Also accepts raw 3-letter codes as fallback for legacy callers.
+        """
+        self._handlers[message_name] = handler
 
     def process_message(self, type_code, data, direction, uid=None):
         """
@@ -104,15 +158,19 @@ class GameState:
             direction: "c2s" or "s2c"
             uid: message UID if present
         """
-        name = get_type_name(type_code)
+        # Resolve to stable name via matching, fallback to dofus_message dict
+        name = self.matching.get_name(type_code)
+        if name == type_code:
+            # Not in matching yet — try legacy dict
+            name = get_type_name(type_code)
 
         # Log the message
         self._message_log.append((type_code, name, direction))
         if len(self._message_log) > 200:
             self._message_log = self._message_log[-100:]
 
-        # Call handler if registered
-        handler = self._handlers.get(type_code)
+        # Look up handler by stable name first, then by raw code (legacy fallback)
+        handler = self._handlers.get(name) or self._handlers.get(type_code)
         if handler:
             try:
                 handler(self, data, direction, uid)

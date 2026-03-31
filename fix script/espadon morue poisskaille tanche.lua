@@ -1,0 +1,43 @@
+MAX_PODS = 95
+ELEMENTS_TO_GATHER = {132,273,272,274}
+
+function move()
+        return {
+        { map = "0,-57", path = "1,-57", gather = true, fight = false },
+        { map = "1,-57", path = "2,-57", gather = true, fight = false },
+        { map = "2,-57", path = "4,-57", gather = true, fight = false },
+        { map = "4,-57", path = "4,-56", gather = true, fight = false },
+        { map = "4,-56", path = "-2,-58", gather = true, fight = false },
+        { map = "-2,-58", path = "-84,-41", gather = true, fight = false },
+        { map = "-84,-41", path = "-84,-40", gather = true, fight = false },
+        { map = "-84,-40", path = "-82,-40", gather = true, fight = false },
+        { map = "-82,-40", path = "-82,-39", gather = true, fight = false },
+        { map = "-82,-39", path = "-79,-39", gather = true, fight = false },
+        { map = "-79,-39", path = "-78,-37", gather = true, fight = false },
+        { map = "-78,-37", path = "-76,-33", gather = true, fight = false },
+        { map = "-76,-33", path = "-69,-51", gather = true, fight = false },
+        { map = "-69,-51", path = "-68,-51", gather = true, fight = false },
+        { map = "-68,-51", path = "-68,-52", gather = true, fight = false },
+        { map = "-68,-52", path = "-66,-53", gather = true, fight = false },
+        { map = "-66,-53", path = "-67,-54", gather = true, fight = false },
+        { map = "-67,-54", path = "-63,-55", gather = true, fight = false },
+        { map = "-63,-55", path = "-62,-61", gather = true, fight = false },
+        { map = "-62,-61", path = "-45,20", gather = true, fight = false },
+        { map = "-45,20", path = "-45,21", gather = true, fight = false },
+        { map = "-45,21", path = "-44,21", gather = true, fight = false },
+        { map = "-44,21", path = "-46,22", gather = true, fight = false },
+        { map = "-46,22", path = "-45,15", gather = true, fight = false },
+        { map = "-45,15", path = "-46,14", gather = true, fight = false },
+        { map = "-46,14", path = "-46,13", gather = true, fight = false },
+        { map = "-46,13", path = "-47,11", gather = true, fight = false },
+        { map = "-47,11", path = "-49,7", gather = true, fight = false },
+        { map = "-49,7", path = "-51,4", gather = true, fight = false },
+        { map = "-51,4", path = "-52,-1", gather = true, fight = false },
+        { map = "-52,-1", path = "-52,-2", gather = true, fight = false },
+        { map = "-52,-2", path = "-55,-1", gather = true, fight = false },
+        { map = "-55,-1", path = "-59,1", gather = true, fight = false },
+        { map = "-59,1", path = "-60,2", gather = true, fight = false },
+        { map = "-60,2", path = "-60,5", gather = true, fight = false },
+        { map = "-60,5", path = "-59,9", gather = true, fight = false },
+        }
+end

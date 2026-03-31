@@ -1,0 +1,17 @@
+{
+    "version": "2026-03-26",
+    "codes": {
+        "iro": "MapMovementRequest",
+        "itl": "InteractiveUseRequest",
+        "isu": "MapComplementaryInformationEvent",
+        "kot": "ObjectHarvestedEvent",
+        "hfb": "InteractiveUsedEvent",
+        "kof": "InteractiveUseEndedEvent",
+        "jsi": "MapMovementEvent",
+        "lds": "MapMovementConfirmResponse",
+        "jse": "MapMovementConfirmRequest",
+        "isg": "MapChangeRequest",
+        "itk": "InteractiveUseCheckRequest",
+        "ite": "InteractiveUseCheckResponse"
+    }
+}
