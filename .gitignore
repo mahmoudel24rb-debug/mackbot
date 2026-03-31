@@ -49,3 +49,6 @@ dofus2-ga-orukam.ankama-games.com
 # Large binary caches
 **/WebView2/
 *.exe
+
+# Decompiled reference files (may contain third-party secrets)
+reference/csharp/
