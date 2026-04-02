@@ -134,6 +134,33 @@ def handle_character_select(state, data, direction, uid):
 #   field 6 (varint): cell/position?
 #   field 8 (bytes): repeated - characteristics
 
+def _try_extract_character_name(state, data, max_depth=4):
+    """Try to extract character name from nested protobuf data.
+    Looks for UTF-8 strings of 3-25 chars that look like a player name."""
+    if not data or max_depth <= 0:
+        return False
+    fields = _decode(data)
+    for fn, wt, val in fields:
+        if wt == WIRE_LENGTH_DELIMITED:
+            # Try as UTF-8 string
+            try:
+                text = val.decode("utf-8")
+                if (3 <= len(text) <= 25
+                        and not text.startswith("type.")
+                        and not text.isdigit()
+                        and "/" not in text
+                        and any(c.isalpha() for c in text)):
+                    state.character.name = text
+                    logger.info(f"  -> Character name found: '{text}' (f{fn})")
+                    return True
+            except (UnicodeDecodeError, ValueError):
+                pass
+            # Try as sub-message
+            if _try_extract_character_name(state, val, max_depth - 1):
+                return True
+    return False
+
+
 def handle_character_loaded(state, data, direction, uid):
     """Parse CharacterLoaded - character data after selection."""
     if direction != "s2c":
@@ -163,9 +190,13 @@ def handle_character_loaded(state, data, direction, uid):
         else:
             logger.debug(f"    jrl f6={cell_candidate} (NOT a cell, >559)")
 
+    # Try to extract character name from the message
+    if state.character.name is None:
+        _try_extract_character_name(state, data)
+
     state.connected = True
     state._connect_time = time.time()
-    logger.info(f"  -> Character loaded: level={state.character.level}, cell={state.character.cell_id}")
+    logger.info(f"  -> Character loaded: name={state.character.name}, level={state.character.level}, cell={state.character.cell_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -373,9 +404,15 @@ def handle_map_info(state, data, direction, uid):
             char_id = actor_id
             logger.info(f"  -> Character detected: id={actor_id}")
 
-        if char_id and actor_id == char_id and cell_id is not None:
-            state.character.cell_id = cell_id
-            logger.info(f"  -> Character cell from isu: {cell_id}")
+        if char_id and actor_id == char_id:
+            if cell_id is not None:
+                state.character.cell_id = cell_id
+                logger.info(f"  -> Character cell from isu: {cell_id}")
+            # Try to extract name from actor data
+            if state.character.name is None:
+                nested = _get_field(actor_fields, 3, WIRE_LENGTH_DELIMITED)
+                if nested:
+                    _try_extract_character_name(state, nested)
 
     # --- Interactive elements (field 2) ---
     interactives = _get_all_fields(fields, 2, WIRE_LENGTH_DELIMITED)

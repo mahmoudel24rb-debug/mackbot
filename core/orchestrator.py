@@ -39,6 +39,7 @@ class Orchestrator:
 
         # Connection state
         self._connected_emitted = False
+        self._last_emitted_name = None
 
         # Sniffer mode
         self._sniff_mode = False
@@ -260,32 +261,33 @@ class Orchestrator:
                         "code": type_code, "name": name, "is_new": False,
                     })
 
-            # Emit key game events
-            if "MapComplementary" in name or "MapData" in name:
-                bus.emit("map.changed", {
-                    "map_id": gs.map.map_id, "x": gs.map.x, "y": gs.map.y,
-                })
-                # If connected but not yet reported, emit connected
-                if gs.connected and not self._connected_emitted:
-                    self._connected_emitted = True
-                    bus.emit("game.connected", {
-                        "name": gs.character.name or f"ID:{gs.character.id}",
-                        "level": gs.character.level,
-                    })
-            elif "Harvested" in name or "InteractiveUseEnded" in name:
-                # Filter out init burst: only count as gather if we've been
-                # connected for more than 10 seconds
-                import time
-                if gs._connect_time and (time.time() - gs._connect_time) > 10:
-                    bus.emit("gather.completed", {"map_id": gs.map.map_id})
-            elif "FightJoin" in name or "FightStart" in name:
-                bus.emit("fight.started", {})
-            elif "CharacterSelected" in name:
+            # Fallback: emit connected as soon as gs.connected is True
+            if gs.connected and not self._connected_emitted:
                 self._connected_emitted = True
                 bus.emit("game.connected", {
                     "name": gs.character.name or f"ID:{gs.character.id}",
                     "level": gs.character.level,
                 })
+
+            # Re-emit if name was discovered later
+            if gs.connected and gs.character.name and gs.character.name != self._last_emitted_name:
+                self._last_emitted_name = gs.character.name
+                bus.emit("game.connected", {
+                    "name": gs.character.name,
+                    "level": gs.character.level,
+                })
+
+            # Emit key game events
+            if "MapComplementary" in name or "MapData" in name:
+                bus.emit("map.changed", {
+                    "map_id": gs.map.map_id, "x": gs.map.x, "y": gs.map.y,
+                })
+            elif "Harvested" in name or "InteractiveUseEnded" in name:
+                import time
+                if gs._connect_time and (time.time() - gs._connect_time) > 10:
+                    bus.emit("gather.completed", {"map_id": gs.map.map_id})
+            elif "FightJoin" in name or "FightStart" in name:
+                bus.emit("fight.started", {})
             return result
 
         gs.process_message = patched_process
