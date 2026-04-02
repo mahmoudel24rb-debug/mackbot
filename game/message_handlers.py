@@ -265,19 +265,20 @@ def handle_current_cell(state, data, direction, uid):
         if fn == 1 and wt == WIRE_VARINT:
             state.pos_ref = val
 
-            # Try to extract cellId from pos_ref low bits
-            cell_low10 = val & 0x3FF   # bits 0-9 (0-1023)
-            cell_low12 = val & 0xFFF   # bits 0-11 (0-4095)
+            # Try multiple extraction strategies for cellId
+            candidates = [
+                ("low10", val & 0x3FF),
+                ("low12", val & 0xFFF),
+                ("mid10", (val >> 10) & 0x3FF),
+                ("mid12", (val >> 12) & 0x3FF),
+            ]
+            logger.info(f"  -> iny pos_ref=0x{val:08X} candidates={[(l,c) for l,c in candidates if 0<=c<560]}")
 
-            logger.info(f"  -> iny pos_ref=0x{val:08X} "
-                        f"low10={cell_low10} low12={cell_low12}")
-
-            # If a candidate is a valid cellId (0-559), use it
-            for candidate in [cell_low10, cell_low12]:
+            for label, candidate in candidates:
                 if 0 <= candidate < 560:
                     old = state.character.cell_id
                     state.character.cell_id = candidate
-                    logger.info(f"  -> Cell from iny: {candidate} (was {old})")
+                    logger.info(f"  -> Cell from iny ({label}): {candidate} (was {old})")
                     break
         elif wt == WIRE_VARINT:
             logger.debug(f"    iny f{fn}(varint): {val}")
@@ -1002,8 +1003,9 @@ def handle_ipi_move_request(state, data, direction, uid):
             # If cell was None (after map change), cells[0] reveals the spawn cell
             if state.character.cell_id is None:
                 logger.info(f"  -> Spawn cell detected: {cells[0]}")
-            # Set destination as current cell (client will arrive there)
-            state.character.cell_id = cells[-1]
+            # Set cells[0] as current position (start), NOT cells[-1] (destination)
+            # The destination will be set by handle_ion_move_event when server confirms
+            state.character.cell_id = cells[0]
             logger.info(f"  -> Cell: {cells[0]} -> {cells[-1]} ({len(cells)} steps)")
 
             # Learn walkable cells from real client's accepted MoveRequests
