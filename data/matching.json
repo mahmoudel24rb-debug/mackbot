@@ -2,17 +2,25 @@
     "version": "2026-04-02",
     "codes": {
         "iro": "MapMovementRequest",
-        "itl": "InteractiveUseRequest_OLD",
-        "isu": "MapComplementaryInformationEvent",
-        "kot": "ObjectHarvestedEvent",
-        "hfb": "InteractiveUsedEvent",
-        "kof": "InteractiveUseEndedEvent",
         "jsi": "MapMovementEvent",
-        "lds": "MapMovementConfirmResponse",
         "jse": "MapMovementConfirmRequest",
+        "lds": "MapMovementConfirmResponse",
         "isg": "MapChangeRequest",
+        "isu": "MapComplementaryInformationEvent",
         "itk": "InteractiveUseCheckRequest",
         "ite": "InteractiveUseCheckResponse",
-        "idh": "InteractiveUseRequest"
+        "idh": "InteractiveUseRequest",
+        "hfb": "InteractiveUsedEvent",
+        "kof": "InteractiveUseEndedEvent",
+        "kot": "ObjectHarvestedEvent",
+        "jrl": "CharacterSelectedEvent",
+        "jtx": "CharacterSelectedSuccessEvent",
+        "jtl": "CharacterListEvent",
+        "jtb": "CharacterSelectEvent",
+        "hdm": "CharacterCharacteristicsEvent",
+        "iaa": "MapCoordinatesEvent",
+        "iny": "CurrentCellEvent",
+        "kww": "MapCellPropertiesEvent",
+        "ial": "MapCellDataEvent"
     }
 }
