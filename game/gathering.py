@@ -1,13 +1,13 @@
 """
 Dofus 3 Gathering - Orchestrates the harvest sequence.
 
-The bot only handles the interaction (itk+itl). Movement is done manually
+The bot only handles the interaction (itk+idh). Movement is done manually
 by the player — the bot does NOT inject MoveRequests for gathering.
 
 Real client gather sequence (confirmed 2026-03-26):
   1. Player moves adjacent to resource (manual or script)
-  2. C2S itk (empty payload) + C2S itl (f1=elementId) back-to-back (~6ms apart)
-  3. S2C ite (arrives after itl, not waited for)
+  2. C2S itk (empty payload) + C2S idh (f1=elementId) back-to-back (~6ms apart)
+  3. S2C ite (arrives after idh, not waited for)
   4. S2C irj (interaction validated)
   5. S2C kof (InteractiveUseEndedEvent — harvest done)
   6. S2C kot (ObjectHarvestedEvent — item received)
@@ -59,7 +59,7 @@ class GatherController:
             return False
         inner = build_pre_interact_request()
         packet = build_c2s_request(code, inner, self.movement._next_uid())
-        logger.info(f"  [GATHER] Sending itk")
+        logger.info(f"  [GATHER] Sending {code}")
         return await self.movement.send_packet(packet)
 
     async def send_interact(self, element_id):
@@ -70,7 +70,7 @@ class GatherController:
             return False
         inner = build_interact_request(element_id)
         packet = build_c2s_request(code, inner, self.movement._next_uid())
-        logger.info(f"  [GATHER] Sending itl: elem={element_id}")
+        logger.info(f"  [GATHER] Sending {code}: elem={element_id}")
         return await self.movement.send_packet(packet)
 
     async def wait_gather_complete(self, timeout=15.0):
@@ -155,7 +155,7 @@ class GatherController:
                 return False
 
         # Send itl IMMEDIATELY after ite
-        logger.info(f"  [GATHER] ite received, sending itl")
+        logger.info(f"  [GATHER] ite received, sending InteractiveUseRequest")
         ok = await self.send_interact(resource.element_id)
         if not ok:
             self.game_state.is_busy = False

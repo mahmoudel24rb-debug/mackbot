@@ -308,9 +308,10 @@ class AppWindow(ctk.CTk):
 
         elif kind == "connected":
             data = msg[1]
-            self.sidebar.set_connected(data.get("name"), data.get("level"))
+            self.sidebar.set_connected(
+                data.get("name"), data.get("level"), data.get("server"))
             self.tabs["harvest"].append_log(
-                f"Connecté: {data.get('name')}", "success")
+                f"Connecte: {data.get('name')}", "success")
 
         elif kind == "map_changed":
             data = msg[1]

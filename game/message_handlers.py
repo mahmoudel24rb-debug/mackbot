@@ -462,6 +462,7 @@ def handle_map_info(state, data, direction, uid):
             logger.debug(f"    [ISU-RESOURCE #{i}] elem={elem_id} cell={cell_id} status={status}")
     state.map.resources = resources
     avail = [r for r in resources if r.available]
+    logger.info(f"  -> Resources detail: {len(avail)} available at cells {[r.cell_id for r in avail]}")
 
     logger.info(f"  -> Map loaded: {len(actors)} actors, {len(interactives)} interactive, "
                 f"{len(avail)}/{len(resources)} resources, "
@@ -1299,6 +1300,7 @@ def handle_map_data_response(state, data, direction, uid):
 
     state.map.resources = resources
     avail = [r for r in resources if r.available]
+    logger.info(f"  -> Resources detail: {len(avail)} available at cells {[r.cell_id for r in avail]}")
     logger.info(f"  -> Resources: {len(resources)} total, {len(avail)} available")
     for r in avail[:5]:
         logger.info(f"    {r}")

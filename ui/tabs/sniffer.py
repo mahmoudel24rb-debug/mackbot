@@ -47,12 +47,28 @@ class SnifferTab(ctk.CTkFrame):
                                          command=self._toggle_sniff)
         self._btn_start.grid(row=0, column=2, padx=4, pady=8)
 
+        self._btn_clear = ctk.CTkButton(header, text="Clear",
+                                        font=theme.FONT_BODY,
+                                        fg_color=theme.BG_CARD_ALT,
+                                        width=80, height=32,
+                                        command=self._clear_traffic)
+        self._btn_clear.grid(row=0, column=3, padx=4, pady=8)
+
         self._btn_save = ctk.CTkButton(header, text="Save Matching",
                                         font=theme.FONT_BODY,
                                         fg_color=theme.TEXT_GREEN,
                                         width=120, height=32,
                                         command=self._save_clicked)
-        self._btn_save.grid(row=0, column=3, padx=(4, 12), pady=8)
+        self._btn_save.grid(row=0, column=4, padx=(4, 12), pady=8)
+
+        # Direction filter
+        self._dir_filter = ctk.CTkSegmentedButton(
+            header, values=["Both", "C2S", "S2C"],
+            font=theme.FONT_SMALL, height=28,
+            command=self._on_filter_change)
+        self._dir_filter.set("Both")
+        self._dir_filter.grid(row=0, column=5, padx=(4, 12), pady=8)
+        self._current_filter = "Both"
 
         # --- Left: Matching Table ---
         left = ctk.CTkFrame(self, fg_color=theme.BG_PANEL, corner_radius=8)
@@ -128,9 +144,26 @@ class SnifferTab(ctk.CTkFrame):
             self._on_save()
         self._status_label.configure(text="Matching saved!", text_color=theme.TEXT_GREEN)
 
+    def _clear_traffic(self):
+        self._traffic_text.configure(state="normal")
+        self._traffic_text.delete("1.0", "end")
+        self._traffic_text.configure(state="disabled")
+        self._packet_count = 0
+        self._update_stats()
+
+    def _on_filter_change(self, value):
+        self._current_filter = value
+
     def add_traffic(self, code, name, direction, size):
         """Add a traffic entry to the live view."""
         self._packet_count += 1
+        # Apply direction filter
+        if self._current_filter == "C2S" and direction != "c2s":
+            self._update_stats()
+            return
+        if self._current_filter == "S2C" and direction != "s2c":
+            self._update_stats()
+            return
         tag = "c2s" if direction == "c2s" else "s2c"
         arrow = ">>>" if direction == "c2s" else "<<<"
         line = f"{arrow} {code:>3s} ({name}) [{size}B]\n"

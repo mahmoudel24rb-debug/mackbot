@@ -13,6 +13,8 @@ Cell coordinate conversion (from Jitsuri JsPathFinder.cs):
   y = num + cellId // 14
 """
 
+from utils import logger
+
 MAP_WIDTH = 14
 MAP_HEIGHT = 20
 # Dofus 3 maps have 560 cells (14 columns x 40 rows), IDs 0-559.
@@ -127,6 +129,23 @@ def cell_distance(cell_a, cell_b):
     return abs(pa[0] - pb[0]) + abs(pa[1] - pb[1])
 
 
+def _fallback_compress(path):
+    """Safe fallback: emit every adjacent step as its own keyCell."""
+    if not path:
+        return []
+    result = []
+    for i in range(len(path) - 1):
+        direction = get_direction(path[i], path[i + 1])
+        if direction < 0:
+            direction = 0
+        result.append((direction << 12) | path[i])
+    last_dir = get_direction(path[-2], path[-1]) if len(path) >= 2 else 0
+    if last_dir < 0:
+        last_dir = 0
+    result.append((last_dir << 12) | path[-1])
+    return result
+
+
 def compress_path(path):
     """
     Compress a path of cell IDs into Dofus format.
@@ -145,9 +164,8 @@ def compress_path(path):
     for i in range(len(path) - 1):
         direction = get_direction(path[i], path[i + 1])
         if direction == -1:
-            # Non-adjacent cells in path — emit each cell individually
-            compressed.append((last_dir << 12) | path[i] if last_dir >= 0 else path[i])
-            continue
+            # Non-adjacent cells in path — fall back to per-step compression
+            return _fallback_compress(path)
         if direction != last_dir:
             compressed.append((direction << 12) | path[i])
             last_dir = direction
@@ -161,6 +179,7 @@ def compress_path(path):
         validated = _validate_keycells(compressed)
         if validated is not None:
             return validated
+        return _fallback_compress(path)
 
     return compressed
 

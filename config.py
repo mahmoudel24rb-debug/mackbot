@@ -34,8 +34,8 @@ ROUTES_DIR  = "routes"
 
 # UI settings
 UI_THEME     = "dark"           # "dark" or "light"
-UI_ACCENT    = "#1f6aa5"        # Blue accent colour
-UI_WIDTH     = 1100
+UI_ACCENT    = "#4caf50"        # Green accent colour (Jitsuri-inspired)
+UI_WIDTH     = 1200
 UI_HEIGHT    = 700
 UI_TITLE     = "DofusBot"
 

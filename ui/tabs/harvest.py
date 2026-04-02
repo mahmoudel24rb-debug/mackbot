@@ -165,9 +165,11 @@ class HarvestTab(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def append_log(self, text: str, level: str = "info"):
+        from datetime import datetime
         tag = level if level in theme.LOG_COLORS else "info"
+        ts = datetime.now().strftime("[%H:%M:%S] ")
         self._log_text.configure(state="normal")
-        self._log_text.insert("end", text + "\n", tag)
+        self._log_text.insert("end", ts + text + "\n", tag)
         self._log_text.see("end")
         self._log_text.configure(state="disabled")
 
