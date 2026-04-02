@@ -913,6 +913,11 @@ class MITMProxy:
                 logger.info("  All packets will be logged in JSONL format")
                 logger.info("  Type 'capture' again to stop")
 
+        elif cmd in ("mapview", "mv"):
+            from game.map_view import render_map
+            for line in render_map(gs, nav):
+                logger.info(line)
+
         elif cmd in ("resources", "res"):
             resources = gs.map.resources
             if not resources:
@@ -1095,6 +1100,40 @@ class MITMProxy:
             else:
                 logger.error(f"Unknown subcommand: {sub}. Use: load/run/stop/status")
 
+        elif cmd in ("autofarm", "af"):
+            if not hasattr(self, '_auto_farmer'):
+                from game.auto_farmer import AutoFarmer
+                self._auto_farmer = AutoFarmer(gs, nav, gs.gatherer)
+
+            if self._auto_farmer.is_running:
+                self._auto_farmer.stop()
+                logger.info("Autofarm stopped")
+                return
+
+            if len(args) < 2:
+                logger.error("Usage: autofarm <x1>,<y1> <x2>,<y2> [resource_type]")
+                logger.error("Example: autofarm 3,-28 5,-23")
+                return
+
+            try:
+                x1, y1 = map(int, args[0].split(","))
+                x2, y2 = map(int, args[1].split(","))
+                res_type = int(args[2]) if len(args) > 2 else None
+            except ValueError:
+                logger.error("Invalid coordinates. Use: autofarm x1,y1 x2,y2")
+                return
+
+            logger.info(f"Starting autofarm: ({x1},{y1}) to ({x2},{y2})")
+            asyncio.create_task(
+                self._auto_farmer.run((x1, x2), (y1, y2), res_type)
+            )
+
+        elif cmd in ("stopfarm", "sf"):
+            if hasattr(self, '_auto_farmer') and self._auto_farmer.is_running:
+                self._auto_farmer.stop()
+            else:
+                logger.info("Autofarm is not running")
+
         else:
             logger.error(f"Unknown command: {cmd}. Type 'help' for commands.")
 
@@ -1112,6 +1151,9 @@ class MITMProxy:
             ("map <ref_hex>",  "Change map (hex target ref)"),
             ("walkto (w) <cell> <ref_hex>", "Walk to cell + change map"),
             ("resources (res)", "List resources on current map"),
+            ("mapview (mv)", "ASCII map view (player, resources, mobs)"),
+            ("autofarm (af) <x1,y1> <x2,y2>", "Auto-farm in map rectangle"),
+            ("stopfarm (sf)", "Stop auto-farming"),
             ("gather (ga) [type]", "Gather nearest resource"),
             ("farm [type]",    "Gather all resources on map"),
             ("entities (e)",   "List entities on map"),

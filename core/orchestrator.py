@@ -1,20 +1,17 @@
 """
 Orchestrator — central controller that ties together:
-  - FakeLauncher (IPC proxy to Ankama Launcher)
+  - WinDivert packet redirect (replaces FakeLauncher)
   - MITMProxy (game traffic interception)
   - GameState + Navigator + GatherController
   - ScriptEngine (Lua/Python farming scripts)
-  - EventBus (pub/sub for UI ↔ bot communication)
-
-Typical flow:
-    orch = Orchestrator()
-    await orch.start()          # Starts proxy + fake launcher
-    await orch.run_script("scripts/farm.lua")
-    await orch.stop()
+  - EventBus (pub/sub for UI <-> bot communication)
+  - Sniffer mode for matching code correction
 """
 
 import asyncio
 import os
+import re
+import subprocess
 
 from core.event_bus import EventBus
 from game.state import GameState
@@ -37,14 +34,19 @@ class Orchestrator:
         self.navigator: Navigator | None = None
         self.gatherer: GatherController | None = None
         self.script_engine: ScriptEngine | None = None
-        self.proxy = None            # MITMProxy instance (lazy)
-        self.fake_launcher = None    # FakeLauncher instance (lazy)
+        self.proxy = None
+        self.redirect = None  # WinDivert PacketRedirect
+
+        # Connection state
+        self._connected_emitted = False
+
+        # Sniffer mode
+        self._sniff_mode = False
+        self._sniff_log = []  # list of (code, name, direction, size)
 
         # Asyncio tasks
         self._proxy_task: asyncio.Task | None = None
-        self._launcher_task: asyncio.Task | None = None
         self._script_task: asyncio.Task | None = None
-
         self._running = False
 
     # ------------------------------------------------------------------
@@ -52,7 +54,7 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     async def start(self):
-        """Start the proxy and fake launcher. Returns when both are ready."""
+        """Start WinDivert redirect + MITM proxy."""
         if self._running:
             return
 
@@ -62,13 +64,13 @@ class Orchestrator:
         # Wire up game components
         self._init_game_components()
 
-        # Start fake launcher
-        await self._start_fake_launcher()
+        # Start WinDivert redirect
+        await self._start_windivert()
 
-        # Start MITM proxy
+        # Start MITM proxy (no console — UI handles commands)
         await self._start_proxy()
 
-        logger.info("[ORC] Orchestrator started")
+        logger.info("[ORC] Orchestrator started (WinDivert mode)")
         self.bus.emit("bot.started", {"status": "running"})
 
     async def stop(self):
@@ -91,12 +93,13 @@ class Orchestrator:
             except asyncio.CancelledError:
                 pass
 
-        if self._launcher_task and not self._launcher_task.done():
-            self._launcher_task.cancel()
+        # Stop WinDivert
+        if self.redirect:
             try:
-                await self._launcher_task
-            except asyncio.CancelledError:
-                pass
+                self.redirect.stop()
+                logger.info("[ORC] WinDivert stopped")
+            except Exception as e:
+                logger.debug(f"[ORC] WinDivert stop error: {e}")
 
         logger.info("[ORC] Orchestrator stopped")
         self.bus.emit("bot.stopped", {})
@@ -106,13 +109,11 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     def load_script(self, path: str) -> bool:
-        """Load a Lua script. Returns True on success."""
         if self.script_engine is None:
             self._init_game_components()
         return self.script_engine.load(path)
 
     async def run_script(self, path: str = None, loop: bool = True):
-        """Load (optional) and run a farming script."""
         if path:
             ok = self.load_script(path)
             if not ok:
@@ -136,18 +137,64 @@ class Orchestrator:
         await self._script_task
 
     def stop_script(self):
-        """Stop a running script."""
         if self.script_engine:
             self.script_engine.stop()
         if self._script_task and not self._script_task.done():
             self._script_task.cancel()
 
     # ------------------------------------------------------------------
+    # Sniffer mode
+    # ------------------------------------------------------------------
+
+    def start_sniffing(self):
+        """Enable sniffer mode — logs all traffic for matching correction."""
+        self._sniff_mode = True
+        self._sniff_log.clear()
+        logger.info("[ORC] Sniffer mode ENABLED — play manually to capture codes")
+
+    def stop_sniffing(self):
+        """Disable sniffer mode."""
+        self._sniff_mode = False
+        logger.info(f"[ORC] Sniffer mode DISABLED — captured {len(self._sniff_log)} packets")
+
+    def save_matching(self):
+        """Save current matching to disk."""
+        self.game_state.matching.save()
+        logger.info("[ORC] Matching saved to disk")
+
+    def get_matching_codes(self):
+        """Return current code->name dict."""
+        return dict(self.game_state.matching._code_to_name)
+
+    # ------------------------------------------------------------------
+    # Gather command
+    # ------------------------------------------------------------------
+
+    async def gather_nearest(self, resource_type=None):
+        """Gather the nearest available resource."""
+        if not self.gatherer:
+            return False
+        gs = self.game_state
+        avail = gs.map.get_available_resources(resource_type)
+        if not avail:
+            logger.error("[ORC] No available resources")
+            return False
+
+        current = gs.character.cell_id
+        if current is not None:
+            from game.map_grid import cell_distance
+            avail.sort(key=lambda r: cell_distance(current, r.cell_id)
+                       if r.cell_id is not None else 9999)
+
+        target = avail[0]
+        logger.info(f"[ORC] Gathering: {target}")
+        return await self.gatherer.gather_resource(target)
+
+    # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
 
     def get_status(self) -> dict:
-        """Return current bot status dict (for UI)."""
         gs = self.game_state
         return {
             "connected": gs.connected,
@@ -168,6 +215,7 @@ class Orchestrator:
             "script_steps": (self.script_engine.route_length
                              if self.script_engine else 0),
             "resources_on_map": len(gs.map.get_available_resources()),
+            "sniffing": self._sniff_mode,
         }
 
     # ------------------------------------------------------------------
@@ -175,7 +223,6 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     def _init_game_components(self):
-        """Wire up Navigator, GatherController, ScriptEngine."""
         from game.message_handlers import register_all_handlers
         register_all_handlers(self.game_state)
 
@@ -183,7 +230,7 @@ class Orchestrator:
         self._wire_event_bus()
 
         self.navigator = Navigator(self.game_state)
-        self.gatherer = GatherController(self.game_state, self.navigator)
+        self.gatherer = GatherController(self.game_state)
         self.script_engine = ScriptEngine(self.game_state, self.navigator, self.gatherer)
 
         # Back-references
@@ -191,66 +238,126 @@ class Orchestrator:
         self.game_state.gatherer = self.gatherer
 
     def _wire_event_bus(self):
-        """Hook GameState updates to emit EventBus events."""
         gs = self.game_state
         bus = self.bus
         orig_process = gs.process_message
 
         def patched_process(type_code, data, direction, uid=None):
             result = orig_process(type_code, data, direction, uid)
-            # Emit key events to the bus
             name = gs.matching.get_name(type_code)
+
+            # Sniffer: emit traffic to UI
+            if self._sniff_mode:
+                size = len(data) if data else 0
+                self._sniff_log.append((type_code, name, direction, size))
+                bus.emit("sniffer.traffic", {
+                    "code": type_code, "name": name,
+                    "direction": direction, "size": size,
+                })
+                # Detect new matches from auto-matcher
+                if name != type_code:
+                    bus.emit("sniffer.match", {
+                        "code": type_code, "name": name, "is_new": False,
+                    })
+
+            # Emit key game events
             if "MapComplementary" in name or "MapData" in name:
                 bus.emit("map.changed", {
-                    "map_id": gs.map.map_id,
-                    "x": gs.map.x,
-                    "y": gs.map.y,
+                    "map_id": gs.map.map_id, "x": gs.map.x, "y": gs.map.y,
                 })
+                # If connected but not yet reported, emit connected
+                if gs.connected and not self._connected_emitted:
+                    self._connected_emitted = True
+                    bus.emit("game.connected", {
+                        "name": gs.character.name or f"ID:{gs.character.id}",
+                        "level": gs.character.level,
+                    })
             elif "Harvested" in name or "InteractiveUseEnded" in name:
-                bus.emit("gather.completed", {
-                    "map_id": gs.map.map_id,
-                })
+                # Filter out init burst: only count as gather if we've been
+                # connected for more than 10 seconds
+                import time
+                if gs._connect_time and (time.time() - gs._connect_time) > 10:
+                    bus.emit("gather.completed", {"map_id": gs.map.map_id})
             elif "FightJoin" in name or "FightStart" in name:
                 bus.emit("fight.started", {})
-            elif "CharacterSelected" in name or "AuthenticationTicket" in name:
+            elif "CharacterSelected" in name:
+                self._connected_emitted = True
                 bus.emit("game.connected", {
-                    "name": gs.character.name,
+                    "name": gs.character.name or f"ID:{gs.character.id}",
+                    "level": gs.character.level,
                 })
             return result
 
         gs.process_message = patched_process
 
-    async def _start_fake_launcher(self):
-        """Start the FakeLauncher IPC proxy as a background task."""
+    def _resolve_server(self):
+        """Resolve game server IP via DNS."""
         try:
-            from launcher.fake_launcher import FakeLauncher
-            self.fake_launcher = FakeLauncher(
-                listen_port=config.FAKE_LAUNCHER_PORT,
-                launcher_port=config.LAUNCHER_IPC_PORT,
+            result = subprocess.run(
+                ["nslookup", config.SERVER_HOSTNAME],
+                capture_output=True, text=True, timeout=10,
+                encoding='utf-8', errors='replace',
             )
+            for line in result.stdout.split("\n"):
+                match = re.search(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", line)
+                if match and not match.group(1).startswith("127."):
+                    return match.group(1)
+        except Exception:
+            pass
+        return None
 
-            async def _run_launcher():
-                try:
-                    await self.fake_launcher.start()
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.error(f"[ORC] FakeLauncher error: {e}")
+    async def _start_windivert(self):
+        """Start WinDivert packet redirect (like bot.py)."""
+        try:
+            from launcher.packet_redirect import PacketRedirect, PROXY_UPSTREAM_SRC_PORT
 
-            self._launcher_task = asyncio.create_task(_run_launcher())
-            logger.info(f"[ORC] FakeLauncher started on port {config.FAKE_LAUNCHER_PORT}")
+            server_ip = self._resolve_server()
+            if not server_ip:
+                logger.warn("[ORC] Cannot resolve game server — WinDivert skipped")
+                self.bus.emit("bot.log", {"text": "DNS resolution failed", "level": "error"})
+                return
+
+            self._server_ip = server_ip
+            logger.info(f"[ORC] Game server: {server_ip}")
+
+            self.redirect = PacketRedirect(
+                game_port=config.SERVER_PORT,
+                proxy_port=config.PROXY_PORT,
+            )
+            self.redirect.start()
+            logger.info("[ORC] WinDivert redirect ACTIVE")
+            self.bus.emit("bot.log", {
+                "text": f"WinDivert active — intercepting port {config.SERVER_PORT}",
+                "level": "success",
+            })
         except Exception as e:
-            logger.warn(f"[ORC] FakeLauncher unavailable: {e}")
+            logger.error(f"[ORC] WinDivert failed: {e}")
+            self.bus.emit("bot.log", {
+                "text": f"WinDivert error: {e}. Run as Administrator!",
+                "level": "error",
+            })
 
     async def _start_proxy(self):
         """Start the MITM proxy as a background task."""
         try:
             from proxy.mitm_proxy import MITMProxy
+            from launcher.packet_redirect import PROXY_UPSTREAM_SRC_PORT
+
+            server_ip = getattr(self, '_server_ip', None) or self._resolve_server()
+
             self.proxy = MITMProxy(
+                listen_host="127.0.0.1",
+                listen_port=config.PROXY_PORT,
+                server_host=server_ip or config.SERVER_HOSTNAME,
+                server_port=config.SERVER_PORT,
                 game_state=self.game_state,
                 event_bus=self.bus,
                 enable_console=False,
             )
+            if server_ip:
+                self.proxy.game_server_host = server_ip
+                self.proxy.game_server_port = config.SERVER_PORT
+            self.proxy.upstream_src_port = PROXY_UPSTREAM_SRC_PORT
 
             async def _run_proxy():
                 try:
@@ -261,6 +368,6 @@ class Orchestrator:
                     logger.error(f"[ORC] MITMProxy error: {e}")
 
             self._proxy_task = asyncio.create_task(_run_proxy())
-            logger.info(f"[ORC] MITMProxy started on port {config.PROXY_PORT}")
+            logger.info(f"[ORC] MITMProxy started on 127.0.0.1:{config.PROXY_PORT}")
         except Exception as e:
-            logger.error(f"[ORC] MITMProxy failed to start: {e}")
+            logger.error(f"[ORC] MITMProxy failed: {e}")

@@ -22,6 +22,7 @@ from ui.sidebar import Sidebar
 from ui.tabs.dashboard import DashboardTab
 from ui.tabs.harvest import HarvestTab
 from ui.tabs.map_view import MapViewTab
+from ui.tabs.sniffer import SnifferTab
 from ui.tabs.settings import SettingsTab
 from utils import logger
 import config
@@ -63,6 +64,9 @@ class AppWindow(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # Init tabs dict before sidebar (sidebar calls _switch_tab during build)
+        self.tabs = {}
+
         # Sidebar
         self.sidebar = Sidebar(self, on_tab_change=self._switch_tab)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
@@ -84,6 +88,12 @@ class AppWindow(ctk.CTk):
                 on_script_select=self._on_script_select,
             ),
             "map_view":  MapViewTab(self._tab_frame),
+            "sniffer":   SnifferTab(
+                self._tab_frame,
+                on_start_sniff=self._on_start_sniff,
+                on_stop_sniff=self._on_stop_sniff,
+                on_save_matching=self._on_save_matching,
+            ),
             "settings":  SettingsTab(self._tab_frame, on_save=self._on_settings_save),
         }
         for tab in self.tabs.values():
@@ -95,9 +105,12 @@ class AppWindow(ctk.CTk):
         self._switch_tab("dashboard")
 
     def _switch_tab(self, name: str):
+        if not self.tabs:
+            return  # Tabs not created yet (sidebar init)
         for tab in self.tabs.values():
             tab.grid_remove()
-        self.tabs[name].grid()
+        if name in self.tabs:
+            self.tabs[name].grid()
 
     # ------------------------------------------------------------------
     # Bot thread
@@ -153,12 +166,20 @@ class AppWindow(ctk.CTk):
         async def on_log(data):
             self._ui_queue.put(("log", data.get("text", ""), data.get("level", "info")))
 
+        @bus.on("sniffer.traffic")
+        async def on_sniff_traffic(data):
+            self._ui_queue.put(("sniff_traffic", data))
+
+        @bus.on("sniffer.match")
+        async def on_sniff_match(data):
+            self._ui_queue.put(("sniff_match", data))
+
         self._orchestrator = Orchestrator(event_bus=bus)
         self._bot_running = True
 
-        # Start proxy + fake launcher
+        # Start WinDivert + proxy
         await self._orchestrator.start()
-        self._ui_queue.put(("log", "Proxy MITM démarré. En attente de connexion Dofus...", "success"))
+        self._ui_queue.put(("log", "WinDivert + Proxy démarrés. Lancez Dofus...", "success"))
 
         # Command processing loop
         while True:
@@ -185,6 +206,22 @@ class AppWindow(ctk.CTk):
                 cell = cmd.get("cell_id")
                 asyncio.create_task(self._move_to_cell(cell))
 
+            elif action == "gather":
+                asyncio.create_task(self._gather())
+
+            elif action == "start_sniff":
+                self._orchestrator.start_sniffing()
+                # Send current matching to UI
+                codes = self._orchestrator.get_matching_codes()
+                self._ui_queue.put(("sniff_matching_refresh", codes))
+
+            elif action == "stop_sniff":
+                self._orchestrator.stop_sniffing()
+
+            elif action == "save_matching":
+                self._orchestrator.save_matching()
+                self._ui_queue.put(("log", "Matching sauvegardé!", "success"))
+
             elif action == "quit":
                 break
 
@@ -195,6 +232,12 @@ class AppWindow(ctk.CTk):
             ok = await self._orchestrator.navigator.move_to(cell_id)
             level = "success" if ok else "warning"
             self._ui_queue.put(("log", f"Déplacement vers {cell_id}: {'OK' if ok else 'échec'}", level))
+
+    async def _gather(self):
+        if self._orchestrator:
+            ok = await self._orchestrator.gather_nearest()
+            level = "success" if ok else "warning"
+            self._ui_queue.put(("log", f"Gather: {'OK' if ok else 'échec'}", level))
 
     # ------------------------------------------------------------------
     # UI → bot commands
@@ -221,6 +264,15 @@ class AppWindow(ctk.CTk):
     def _on_map_click(self, cell_id: int):
         self._send_cmd(action="move_to", cell_id=cell_id)
         self.tabs["harvest"].append_log(f"Déplacement vers cellule {cell_id}", "nav")
+
+    def _on_start_sniff(self):
+        self._send_cmd(action="start_sniff")
+
+    def _on_stop_sniff(self):
+        self._send_cmd(action="stop_sniff")
+
+    def _on_save_matching(self):
+        self._send_cmd(action="save_matching")
 
     def _on_settings_save(self):
         self.tabs["harvest"].append_log("Paramètres sauvegardés.", "success")
@@ -275,6 +327,20 @@ class AppWindow(ctk.CTk):
         elif kind == "log":
             _, text, level = msg
             self.tabs["harvest"].append_log(text, level)
+
+        elif kind == "sniff_traffic":
+            data = msg[1]
+            self.tabs["sniffer"].add_traffic(
+                data["code"], data["name"], data["direction"], data["size"])
+
+        elif kind == "sniff_match":
+            data = msg[1]
+            self.tabs["sniffer"].add_new_match(
+                data["code"], data["name"], data.get("is_new", False))
+
+        elif kind == "sniff_matching_refresh":
+            codes = msg[1]
+            self.tabs["sniffer"].refresh_matching(codes)
 
     def _refresh_map_view(self, game_state):
         """Update the map canvas from current game state."""

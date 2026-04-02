@@ -222,8 +222,9 @@ def handle_map_coordinates(state, data, direction, uid):
 # Low 12 bits might be cell ID, upper bits may be map/entity ref
 
 def handle_current_cell(state, data, direction, uid):
-    """Parse CurrentCellId - current position on map.
-    f1 (varint) = position reference (composite value used in ipi.f2 and ioh.f2)
+    """Parse CurrentCellId (iny) - position reference after map change.
+    f1 (varint) = pos_ref (composite: mapId, used in ipi.f2 and ioh.f2)
+    Try to extract cellId from low bits.
     """
     if direction != "s2c":
         return
@@ -232,7 +233,21 @@ def handle_current_cell(state, data, direction, uid):
     for fn, wt, val in fields:
         if fn == 1 and wt == WIRE_VARINT:
             state.pos_ref = val
-            logger.info(f"  -> CurrentCell: pos_ref=0x{val:08X}")
+
+            # Try to extract cellId from pos_ref low bits
+            cell_low10 = val & 0x3FF   # bits 0-9 (0-1023)
+            cell_low12 = val & 0xFFF   # bits 0-11 (0-4095)
+
+            logger.info(f"  -> iny pos_ref=0x{val:08X} "
+                        f"low10={cell_low10} low12={cell_low12}")
+
+            # If a candidate is a valid cellId (0-559), use it
+            for candidate in [cell_low10, cell_low12]:
+                if 0 <= candidate < 560:
+                    old = state.character.cell_id
+                    state.character.cell_id = candidate
+                    logger.info(f"  -> Cell from iny: {candidate} (was {old})")
+                    break
         elif wt == WIRE_VARINT:
             logger.debug(f"    iny f{fn}(varint): {val}")
         elif wt == WIRE_LENGTH_DELIMITED:
@@ -316,6 +331,7 @@ def handle_map_info(state, data, direction, uid):
             state._walkable_cache[map_id] = pending
             state._pending_walkable = None
             logger.info(f"  -> Walkable grid applied: {len(pending)} cells")
+            state.save_walkable_cache()
         elif hasattr(state, '_walkable_cache') and map_id in state._walkable_cache:
             # Reuse cached grid for this map
             state._walkable_cells = state._walkable_cache[map_id]
@@ -942,6 +958,10 @@ def handle_ipi_move_request(state, data, direction, uid):
         logger.info(f"  -> MOVE REQUEST: cells={cells} dirs={dirs}")
 
         if cells:
+            # Detect cell mismatch (validates iny cellId extraction)
+            if state.character.cell_id is not None and state.character.cell_id != cells[0]:
+                logger.warn(f"  -> CELL MISMATCH: state says {state.character.cell_id}, "
+                            f"but real client starts from {cells[0]}!")
             # If cell was None (after map change), cells[0] reveals the spawn cell
             if state.character.cell_id is None:
                 logger.info(f"  -> Spawn cell detected: {cells[0]}")

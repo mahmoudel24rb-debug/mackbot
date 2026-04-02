@@ -1,207 +1,137 @@
-# Documentation technique — Bot MITM Dofus 3
+# Mackbot - Dofus 3 MITM Bot - Documentation
 
-**Derniere mise a jour** : 2026-03-26
-**Etat** : Move fonctionne, gather en cours de debug, cell tracking S2C OK
-
----
-
-## Etat AVANT le PLAN_IMPLEMENTATION (debut de session)
-
-- Sniffer passif fonctionnel (bot.py + WinDivert)
-- Matching dynamique (auto-detection codes 3 lettres)
-- Cell tracking : NE MARCHAIT PAS (mauvais field numbers, cell toujours 3)
-- Move : NE MARCHAIT PAS (mauvais wrapping GameMessage, mauvais field numbers)
-- Gather : NE MARCHAIT PAS (pas de resources detectees, mauvais code)
-- Pathfinding : grille statique Dofus 2 (largeur 14), incompatible Dofus 3
-
-## Etat APRES les corrections (fin de session)
-
-### Ce qui MARCHE :
-- **Move** (`move <cell>`) : le perso bouge dans le jeu ✅
-- **Cell tracking S2C** : MoveEvent (isj) decode f2=dir, f3=path, f4=actorId ✅
-- **Cell tracking C2S** : MoveRequest (iro) decode f2=mapId, f3=keyCells ✅
-- **MapId tracking** : mis a jour depuis ISU et MoveRequest ✅
-- **Spawn cell detection** : premier MoveRequest apres map change donne cells[0] ✅
-- **Resources detectees** : ISU field 2 (interactive) + field 6 (stated) croises ✅
-- **Abort sur refus** : isl detecte, bot arrete immediatement ✅
-- **IAL parse** : 8987 entries, 485 cellIds extraits ✅
-- **Matching protege** : auto-matcher ne peut plus ecraser un nom deja mappe ✅
-- **Invalidation temporelle** : matching reset apres 21 jours ✅
-
-### Ce qui NE MARCHE PAS ENCORE :
-- **Gather** : le bot envoie `itl` (InteractiveUseRequest) mais le serveur ne repond pas
-- **Pathfinding** : grille Dofus 2 (largeur 14) vs Dofus 3 (largeur probablement 34)
-- **Cell depuis ISU** : le cellId du joueur n'est pas dans les nested actors
-- **KWW** : format non-RLE, pas encore decode (total 196K != 560)
+**Date**: 2026-04-02  
+**Repo**: https://github.com/mahmoudel24rb-debug/mackbot
 
 ---
 
-## Bugs identifies et a corriger (prochaine session)
+## Architecture
 
-### BUG 1 — InteractiveUseRequest (itl) ignore par le serveur
-**Symptome** : Le bot envoie `itl` avec elementId+skillId, le serveur ne repond pas.
-**Causes probables** :
-1. Le vrai client envoie `itk` (36 bytes) AVANT `itl`. Le bot saute cette etape.
-2. Les field numbers sont peut-etre inverses (f1=skillId, f2=elementId au lieu de f1=elementId, f2=skillId)
-3. Taille differente : vrai client itl=43 bytes, bot itl=46 bytes (3 bytes de difference dans le payload)
-
-**Sequence reelle du client** :
 ```
-CLIENT: itk (36 bytes)  ← pre-interaction / check
-SERVER: ite (36 bytes)  ← response
-CLIENT: itl (43 bytes)  ← InteractiveUseRequest (la vraie recolte)
-SERVER: irj (32 bytes)  ← interaction validated
-SERVER: kof (36 bytes)  ← InteractiveUseEndedEvent
+app.py                     <- GUI entry point (CustomTkinter)
+bot.py                     <- CLI entry point (WinDivert + console)
+core/orchestrator.py       <- Central controller (WinDivert + proxy + game components)
+core/event_bus.py          <- Pub/sub for UI <-> bot communication
+proxy/mitm_proxy.py        <- MITM TCP proxy, packet interception
+launcher/packet_redirect.py <- WinDivert packet-level NAT redirect
+game/state.py              <- GameState (Character, Resource, MapInfo, flags)
+game/message_handlers.py   <- All protobuf message handlers (~1500 lines)
+game/map_grid.py           <- Isometric grid (WIDTH=14), cell<->point, compress_path
+game/pathfinding.py        <- A* on isometric grid
+game/movement.py           <- Packet builders + MovementController
+game/navigation.py         <- Navigator (move_to with walkability)
+game/gathering.py          <- GatherController (wait ite -> itl)
+game/auto_farmer.py        <- AutoFarmer (multi-map farming loop)
+game/map_view.py           <- ASCII map viewer
+game/anti_detect.py        <- Human-like delay simulation
+protocol/matching.py       <- 3-letter code <-> stable name mapping
+protocol/auto_matcher.py   <- Auto-detection of codes
+ui/                        <- CustomTkinter GUI (Dashboard, Harvest, MapView, Sniffer, Settings)
+data/matching.json         <- Current code mapping
+data/walkable_cache.json   <- Persisted walkable cells per map
 ```
-
-**Fix a tester** :
-1. Envoyer `itk` avant `itl`
-2. Inverser les fields dans build_interact_request()
-3. Comparer le hex du vrai `itl` client avec celui du bot
-
-### BUG 2 — Grille Dofus 3 incompatible avec map_grid.py
-**Symptome** : `stop_adjacent` choisit cell 302 (voisin Dofus 2) au lieu de 323/351 (vrais voisins Dofus 3)
-**Cause** : map_grid.py utilise une grille isometrique largeur 14 (Dofus 2). Dofus 3 utilise probablement largeur 34.
-**Preuve** : 323 - 289 = 34 (voisin direct). 351 - 289 = 62 (2 rangees).
-**Fix** : Modifier MAP_WIDTH dans map_grid.py de 14 a 34. Mais attention, NE PAS TOUCHER l'algo A* lui-meme.
-
-### BUG 3 — Cell inconnue apres map change
-**Symptome** : cell gardee de l'ancienne map, incorrecte sur la nouvelle
-**Workaround actuel** : garder la derniere cell connue, corrigee au premier MoveRequest sniffe
-**Fix reel** : decoder le cellId depuis ISU actors (toujours pas trouve dans les nested bytes)
 
 ---
 
-## Protocole Dofus 3 — Decouvertes VERIFIEES (2026-03-26)
+## What Works (Confirmed 2026-04-02)
 
-### GameMessage wrapping (C2S)
+- MITM Proxy via WinDivert (bot.py) or GUI (app.py)
+- GUI with CustomTkinter: Dashboard, Harvest, Carte, Sniffer, Parametres
+- MapView in GUI: shows resources (green), player (yellow), mobs on grid
+- Cell tracking from MoveRequest C2S + MoveEvent S2C
+- Resource detection from ISU StatedElement: f2=cellId, f3=elementId, f4=status
+- KWW walkability: cellId = f3 & 0x3FF, flags = f3 >> 10, ~437 walkable cells
+- Walkable cache persists between sessions (data/walkable_cache.json)
+- IAL cell properties: cellId = f2 - 16384
+- Sniffer tab captures live traffic and shows code->name matches
+- Move command works for short paths
+- Real client gather works: itk -> ite -> idh -> irj -> kof
+
+---
+
+## Known Bugs (As of 2026-04-02)
+
+### Bug 1: "Deconnecte" in sidebar even when connected
+The game.connected event doesn't fire reliably. Character name is often None.
+Root cause: CharacterSelectedEvent handler doesn't always fire, character.name never set from ISU.
+
+### Bug 2: InteractiveUseRequest code changed (itl -> idh)
+After game update, the code changed from itl to idh. Fixed in matching.json.
+The bot's gather still needs testing with the new code.
+
+### Bug 3: CellId = None after map change
+After map change, character.cell_id stays as old map's cell or None.
+Player cellId NOT in ISU actors (player uses f1.f8, not f1.f7).
+Workaround: corrected on first MoveRequest sniffed.
+
+### Bug 4: False "Ressource recoltee" on login
+InteractiveUseEndedEvent fires during login burst. 10s grace period filter added.
+
+### Bug 5: MapView shows 3 resources instead of 4
+One resource may be clipped by canvas rendering or at edge cell.
+
+### Bug 6: Pathfinding keyCells invalid for long paths
+compress_path() produces invalid keyCells. Server refuses error 16/23.
+Movement automation disabled in gather. Player moves manually.
+
+### Bug 7: Sniffer doesn't auto-detect new code->name mappings
+Captures traffic but auto-matcher doesn't identify new codes. Manual correction needed.
+
+---
+
+## Protocol Reference
+
+### GameMessage C2S Wrapping
 ```
-GameMessage field 2 (NOT field 4!) :
+GameMessage field 2 (NOT field 4!):
   field 1 = uid (varint, -1 = 0xFFFFFFFFFFFFFFFF)
   field 2 = Any { field 1 = type_url, field 2 = inner_payload }
 ```
-**IMPORTANT** : Le vrai client utilise field 2 du GameMessage, pas field 4.
 
-### MapMovementRequest (C2S) — code `iro`
+### Key Message Codes (Session 2026-04-02)
 ```
-field 2 (varint) = mapId (int64)
-field 3 (length-delimited) = keyCells (packed repeated int32)
-  Chaque int = (direction << 12) | cellId
-  Directions: 0=E, 1=SE, 2=S, 3=SW, 4=W, 5=NW, 6=N, 7=NE
-```
-
-### MapMovementConfirmRequest (C2S) — code `jse`
-```
-field 1 (varint) = 1 (bool true, 4 bytes payload)
-```
-
-### MapChangeRequest (C2S) — code `isg`
-```
-field 2 (varint) = target mapId
+iro  -> MapMovementRequest (C2S)
+jsi  -> MapMovementEvent (S2C)
+jse  -> MapMovementConfirmRequest (C2S)
+lds  -> MapMovementConfirmResponse (S2C)
+isg  -> MapChangeRequest (C2S)
+isu  -> MapComplementaryInformationEvent (S2C)
+itk  -> InteractiveUseCheckRequest (C2S, empty payload)
+ite  -> InteractiveUseCheckResponse (S2C, empty payload)
+idh  -> InteractiveUseRequest (C2S, f1=elementId only) *** CHANGED from itl ***
+hfb  -> InteractiveUsedEvent (S2C)
+kof  -> InteractiveUseEndedEvent (S2C)
+kot  -> ObjectHarvestedEvent (S2C)
 ```
 
-### MapComplementaryInformationEvent (S2C) — code `isu`
+### Gather Sequence (Real Client)
 ```
-field 2  (repeated msg) = InteractiveElements (f1=elemId, f4=cellId?)
-field 6  (repeated msg) = StatedElements (f2=skillId, f3=elemId, f4=status)
-field 7  (varint) = ??? (toujours 1)
-field 11 (repeated msg) = Actors (f1=header, f2=actorId, f3=nested position)
-field 13 (varint) = SubareaId
-field 14 (varint) = MapId
-```
-**Status des ressources** : status=1 signifie DISPONIBLE (pas 0)
-
-### MoveEvent (S2C) — code `isj` (non-matche) et `jsi` (matche)
-```
-isj structure :
-  f2 (varint) = direction/type
-  f3 (bytes)  = packed varints de cellIds (le chemin complet)
-  f4 (varint) = actorId
-jsi structure :
-  f1 (bytes)  = packed varints (positions d'acteurs, pas un chemin)
+1. Player moves adjacent to resource
+2. CLIENT: itk (empty payload)
+3. SERVER: ite (empty payload)  
+4. CLIENT: idh (f1=elementId, NO skillId)  *** was itl, now idh ***
+5. SERVER: irj (interaction validated)
+6. SERVER: kof (gather ended)
 ```
 
-### InteractiveUseRequest (C2S) — code `itl`
+### Resource Detection from ISU
 ```
-Taille vrai client : 43 bytes total
-Taille bot : 46 bytes total (3 bytes de plus)
-Inner payload bot : f1=elementId(varint), f2=skillId(varint) ← A VERIFIER
-Sequence requise : itk → ite → itl (le bot saute itk)
+InteractiveElements (field 2): f1=elementId, f2.f4=cellId (NOT top-level f4!)
+StatedElements (field 6): f2=cellId, f3=elementId, f4=status (1=available)
 ```
 
-### Mouvement refuse (S2C) — code `isl`
+### KWW Walkability
 ```
-f1 (varint) = ??? (grand nombre negatif)
-f2 (varint) = code erreur (11, 12, 13, 22, 23 observes)
-```
-
-### IAL (S2C) — 81KB, donnees de map
-```
-field 2 : ~8987 entries (toutes les cellules avec proprietes)
-Chaque entry : f1=varint(grand nombre), f2=varint(16384+index)
-485 cellIds uniques extraits (0-559)
-```
-
-### KWW (S2C) — 2100 bytes, pre-map change
-```
-field 1 : 297 entries
-Chaque entry : f1=varint, f2=???, f3=varint(souvent >1000), f4=???
-Format : PAS du RLE (sum(f1)+sum(f3) = 196K != 560)
-f3 contient des bitmasks : 1024+n, 512+n etc.
+Entries in pairs: f3 = (flags << 10) | cellId
+Cells NOT in KWW = walkable by default (~437/560)
 ```
 
 ---
 
-## Codes 3 lettres actuels (matching.json 2026-03-26)
+## Next Steps (Priority Order)
 
-```json
-{
-  "iro": "MapMovementRequest",
-  "itl": "InteractiveUseRequest",
-  "isu": "MapComplementaryInformationEvent",
-  "kot": "ObjectHarvestedEvent",
-  "hfb": "InteractiveUsedEvent",
-  "kof": "InteractiveUseEndedEvent",
-  "jsi": "MapMovementEvent",
-  "lds": "MapMovementConfirmResponse",
-  "jse": "MapMovementConfirmRequest",
-  "isg": "MapChangeRequest"
-}
-```
-
-Codes non-matches importants :
-- `isj` : MoveEvent pour autres acteurs (meme structure que jsi mais f2/f3/f4)
-- `isl` : Mouvement refuse par le serveur
-- `itk` : Pre-interaction check (36 bytes, C2S, envoye AVANT itl)
-- `ite` : Response au pre-interaction (36 bytes, S2C)
-- `kww` : Grille pre-map change (297 entries, format inconnu)
-- `ial` : Donnees massives de map (81KB, 8987 entries)
-- `iur` : Donnees initiales (7188 bytes)
-
----
-
-## Architecture des fichiers modifies
-
-```
-game/movement.py      — Builders de paquets (f2=mapId, f3=keyCells) + wrapping field 2
-game/navigation.py    — Pathfinding + walkability observee + abort sur isl
-game/gathering.py     — Sequence gather (skip movement, envoie itl directement)
-game/message_handlers.py — Handlers ISU, MoveEvent, KWW, IAL, refus mouvement
-game/state.py         — Resource.available = status==1, _observed_walkable
-protocol/matching.py  — Invalidation temporelle (21 jours)
-protocol/auto_matcher.py — Protection anti-ecrasement, signature stricte
-utils/proto_debug.py  — NOUVEAU: decode_protobuf_recursive, format_proto_tree, find_values_in_range
-data/matching.json    — itl au lieu de idh pour InteractiveUseRequest
-```
-
----
-
-## Prochaines etapes (ordre de priorite)
-
-1. **Fixer InteractiveUseRequest** : ajouter itk pre-request, verifier field order
-2. **Fixer la grille Dofus 3** : largeur 34 au lieu de 14 dans map_grid
-3. **Decoder KWW** : comprendre le format des 297 entries pour la walkability
-4. **Decoder IAL** : parser correctement les 8987 entries pour la grille complete
-5. **Cell depuis ISU** : trouver le cellId dans les nested bytes des actors
-6. **Navigation inter-maps** : tester travel_to() avec le WorldGraph
-7. **Script Lua** : tester script load/run avec les corrections de mouvement
+1. Fix connection detection - Parse character name from ISU or jrl
+2. Fix gather bot - Use idh code, test itk->idh flow
+3. Fix pathfinding - Validate grid with sniffed data
+4. Automate gather - Re-enable movement once pathfinding works
+5. Test autofarm - autofarm x1,y1 x2,y2 command

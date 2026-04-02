@@ -135,11 +135,40 @@ class GameState:
         self._connect_time = None # timestamp when character loaded (for init filtering)
         # Walkability learned by observing real client MoveRequests/MoveEvents
         self._observed_walkable = {}  # mapId -> set of walkable cellIds
+        self._walkable_cache = {}     # mapId -> set of walkable cellIds (from KWW)
         # Gather sequence flags
         self.interaction_check_ok = False   # Set True when ite (InteractiveUseCheckResponse) arrives
         self.last_harvest_complete = False  # Set True when kof (InteractiveUseEndedEvent) arrives
         # IAL cell properties for walkability analysis
         self.ial_cell_properties = {}  # cellId -> [f1_values]
+        # Load persisted walkable cache
+        self._load_walkable_cache()
+
+    _WALKABLE_CACHE_PATH = "data/walkable_cache.json"
+
+    def _load_walkable_cache(self):
+        """Load persisted walkable cache from disk."""
+        import json, os
+        if os.path.exists(self._WALKABLE_CACHE_PATH):
+            try:
+                with open(self._WALKABLE_CACHE_PATH, "r") as f:
+                    data = json.load(f)
+                self._walkable_cache = {int(k): set(v) for k, v in data.items()}
+                logger.info(f"  Loaded walkable cache: {len(self._walkable_cache)} maps")
+            except Exception as e:
+                logger.debug(f"  Failed to load walkable cache: {e}")
+
+    def save_walkable_cache(self):
+        """Persist walkable cache to disk."""
+        import json
+        if not self._walkable_cache:
+            return
+        try:
+            serializable = {str(k): sorted(v) for k, v in self._walkable_cache.items()}
+            with open(self._WALKABLE_CACHE_PATH, "w") as f:
+                json.dump(serializable, f)
+        except Exception as e:
+            logger.debug(f"  Failed to save walkable cache: {e}")
 
     def register_handler(self, message_name, handler):
         """

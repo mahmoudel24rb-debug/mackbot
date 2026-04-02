@@ -41,6 +41,7 @@ class GatherController:
         """Called by message handler when InteractiveUseEndedEvent arrives."""
         self.game_state.is_busy = False
         self.game_state.busy_reason = None
+        self.game_state.interaction_check_ok = False  # Reset for next gather
         self._gather_done.set()
 
     def _is_adjacent(self, player_cell, resource_cell):
@@ -92,6 +93,10 @@ class GatherController:
         Returns:
             True if gathered successfully
         """
+        # Reset interaction state for a clean gather
+        self.game_state.interaction_check_ok = False
+        self.game_state.last_harvest_complete = False
+
         if not self.navigator or not self.movement or not self.movement.is_connected:
             logger.error("[GATHER] Not connected")
             return False
@@ -117,7 +122,6 @@ class GatherController:
         self.game_state.busy_reason = "gathering"
 
         # Check if ite already arrived (real client auto-sends itk on arrival)
-        # Do NOT reset interaction_check_ok — it may already be True from auto-itk
         ite_received = self.game_state.interaction_check_ok
 
         if not ite_received:

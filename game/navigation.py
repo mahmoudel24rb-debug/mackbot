@@ -46,44 +46,54 @@ class Navigator:
 
     def _apply_observed_walkability(self):
         """Apply walkability data to the grid.
-        Priority: KWW data (437 cells) > observed data (from sniffed moves) > full grid."""
+        Priority: KWW > cache > observed > IAL > full grid.
+        Returns source name for logging."""
         from game.map_grid import CELL_COUNT
         map_id = self.game_state.map.map_id
 
-        # 1. Try KWW walkable set — ONLY if it matches current map
+        # 1. KWW (best: ~437 cells, map-specific)
         kww_walkable = getattr(self.game_state, '_walkable_cells', None)
         kww_map = getattr(self.game_state, '_walkable_cells_map_id', None)
         if kww_walkable and len(kww_walkable) >= 100 and kww_map == map_id:
             self.grid.walkable = bytearray(b'\x00' * CELL_COUNT)
             for cell_id in kww_walkable:
                 self.grid.set_walkable(cell_id, True)
-            logger.debug(f"  [NAV] Applied KWW walkable: {len(kww_walkable)} cells (map {map_id})")
-            return
+            logger.debug(f"  [NAV] Applied KWW: {len(kww_walkable)} cells")
+            return "kww"
 
-        # 2. Try cached walkable set for this specific map
+        # 2. Cache (KWW from a previous visit to this map)
         cache = getattr(self.game_state, '_walkable_cache', {})
         cached = cache.get(map_id)
         if cached and len(cached) >= 100:
             self.grid.walkable = bytearray(b'\x00' * CELL_COUNT)
             for cell_id in cached:
                 self.grid.set_walkable(cell_id, True)
-            logger.debug(f"  [NAV] Applied cached walkable: {len(cached)} cells (map {map_id})")
-            return
+            logger.debug(f"  [NAV] Applied cached: {len(cached)} cells")
+            return "cached"
 
-        # 3. Try observed walkable cells from sniffed traffic
+        # 3. Observed (cells seen in real client MoveRequests/MoveEvents)
         observed = self.game_state._observed_walkable.get(map_id)
         n = len(observed) if observed else 0
-        if n >= 50:
+        if n >= 20:
             self.grid.walkable = bytearray(b'\x00' * CELL_COUNT)
             for cell_id in observed:
                 self.grid.set_walkable(cell_id, True)
-            logger.debug(f"  [NAV] Applied {n} observed walkable cells")
-            return
+            logger.debug(f"  [NAV] Applied {n} observed cells")
+            return "observed"
 
-        # 4. Fallback: all cells walkable (server will reject bad paths)
+        # 4. IAL (all cells mentioned in IAL are probably walkable)
+        ial = self.game_state.ial_cell_properties
+        if ial and len(ial) >= 50:
+            self.grid.walkable = bytearray(b'\x00' * CELL_COUNT)
+            for cell_id in ial:
+                self.grid.set_walkable(cell_id, True)
+            logger.debug(f"  [NAV] Applied IAL: {len(ial)} cells")
+            return "ial"
+
+        # 5. Fallback: full grid (UNSAFE)
         self.grid.walkable = bytearray(b'\x01' * CELL_COUNT)
-        if n > 0:
-            logger.debug(f"  [NAV] Only {n} observed cells, no KWW — using full grid")
+        logger.warn(f"  [NAV] NO walkability data for map {map_id}! Using full grid (UNSAFE)")
+        return "fallback"
 
     # Each MoveRequest sends exactly 2 keyCells (start + end).
     # Path is split so each segment is a straight line (same direction).
@@ -110,8 +120,9 @@ class Navigator:
         if current == target_cell:
             return True
 
-        # Apply observed walkability to the grid before pathfinding
-        self._apply_observed_walkability()
+        # Apply walkability to the grid before pathfinding
+        source = self._apply_observed_walkability()
+        logger.info(f"[NAV] Walkability source: {source}")
 
         # Find full path using A*
         full_path = find_path(current, target_cell, self.grid,

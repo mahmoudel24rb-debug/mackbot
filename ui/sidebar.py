@@ -12,6 +12,7 @@ class Sidebar(ctk.CTkFrame):
         ("dashboard",  "  Dashboard"),
         ("harvest",    "  Récolte"),
         ("map_view",   "  Carte"),
+        ("sniffer",    "  Sniffer"),
         ("settings",   "  Paramètres"),
     ]
 
