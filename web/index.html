@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MackBot</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav id="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">MackBot</span>
+            <span class="version-badge">1.0</span>
+        </div>
+
+        <div class="char-section">
+            <div class="char-avatar" id="charAvatar">?</div>
+            <div class="char-info">
+                <div class="char-name" id="charName">Deconnecte</div>
+                <div class="char-server" id="charServer"></div>
+            </div>
+        </div>
+
+        <div class="status-row">
+            <span class="status-dot disconnected" id="statusDot"></span>
+            <span class="status-text" id="statusText">Deconnecte</span>
+        </div>
+
+        <div class="sidebar-sep"></div>
+
+        <div class="nav-items">
+            <button class="nav-item active" data-tab="dashboard">
+                <span class="nav-indicator"></span>
+                <span>&#x25C9; Accueil</span>
+            </button>
+            <button class="nav-item" data-tab="harvest">
+                <span class="nav-indicator"></span>
+                <span>&#x26CF; Recolte</span>
+            </button>
+            <button class="nav-item disabled" data-tab="fight">
+                <span class="nav-indicator"></span>
+                <span>&#x2694; Chasse</span>
+            </button>
+            <button class="nav-item disabled" data-tab="market">
+                <span class="nav-indicator"></span>
+                <span>&#x1FA99; HDV</span>
+            </button>
+            <button class="nav-item" data-tab="map">
+                <span class="nav-indicator"></span>
+                <span>&#x2726; Carte</span>
+            </button>
+            <button class="nav-item disabled" data-tab="fm">
+                <span class="nav-indicator"></span>
+                <span>&#x1F527; FM</span>
+            </button>
+            <button class="nav-item" data-tab="sniffer">
+                <span class="nav-indicator"></span>
+                <span>&#x25C8; Sniffer</span>
+            </button>
+            <button class="nav-item" data-tab="settings">
+                <span class="nav-indicator"></span>
+                <span>&#x2699; Parametres</span>
+            </button>
+        </div>
+
+        <div class="sidebar-footer">
+            <span class="ws-status" id="wsStatus">&#x25CF; WS deconnecte</span>
+        </div>
+    </nav>
+
+    <!-- Main content area -->
+    <main id="main">
+        <!-- Top header bar -->
+        <header id="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title" id="pageTitle">Accueil</h1>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-char">
+                    <span class="topbar-server" id="topbarServer"></span>
+                    <span class="topbar-name" id="topbarName">Deconnecte</span>
+                    <div class="topbar-avatar" id="topbarAvatar">?</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab content sections -->
+        <div id="content">
+            <section id="tab-dashboard" class="tab-content active">
+                <div class="placeholder-msg">Dashboard — Phase 3</div>
+            </section>
+
+            <section id="tab-harvest" class="tab-content">
+                <div class="placeholder-msg">Recolte — Phase 5</div>
+            </section>
+
+            <section id="tab-map" class="tab-content">
+                <div class="placeholder-msg">Carte — Phase 4</div>
+            </section>
+
+            <section id="tab-sniffer" class="tab-content">
+                <div class="placeholder-msg">Sniffer — Phase 6</div>
+            </section>
+
+            <section id="tab-settings" class="tab-content">
+                <div class="placeholder-msg">Parametres — Phase 6</div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="js/ws.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
