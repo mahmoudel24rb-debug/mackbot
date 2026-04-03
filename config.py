@@ -40,6 +40,10 @@ UI_HEIGHT    = 700
 UI_TITLE     = "MackBot"
 UI_VERSION   = "1.0"
 
+# WebSocket server (for web UI)
+WS_HOST      = "localhost"
+WS_PORT      = 7777
+
 # Anti-detection delays (seconds)
 ACTION_DELAY_MIN  = 0.3
 ACTION_DELAY_MAX  = 0.8

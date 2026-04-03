@@ -224,7 +224,11 @@ class AppWindow(ctk.CTk):
                 cmd = await asyncio.wait_for(self._cmd_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 if self._orchestrator:
-                    self._ui_queue.put(("status", self._orchestrator.get_status()))
+                    status = self._orchestrator.get_status()
+                    self._ui_queue.put(("status", status))
+                    # Also broadcast to WebSocket clients
+                    if self._orchestrator.ws_server and self._orchestrator.ws_server.client_count > 0:
+                        await self._orchestrator.ws_server.broadcast("Status", status)
                 continue
 
             action = cmd.get("action")

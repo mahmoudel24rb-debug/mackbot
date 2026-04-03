@@ -14,6 +14,7 @@ import re
 import subprocess
 
 from core.event_bus import EventBus
+from server.ws_server import BotWebSocketServer
 from game.state import GameState
 from game.navigation import Navigator
 from game.gathering import GatherController
@@ -36,6 +37,10 @@ class Orchestrator:
         self.script_engine: ScriptEngine | None = None
         self.proxy = None
         self.redirect = None  # WinDivert PacketRedirect
+        self.ws_server = BotWebSocketServer(
+            host=getattr(config, "WS_HOST", "localhost"),
+            port=getattr(config, "WS_PORT", 7777),
+        )
 
         # Connection state
         self._connected_emitted = False
@@ -71,6 +76,10 @@ class Orchestrator:
         # Start MITM proxy (no console — UI handles commands)
         await self._start_proxy()
 
+        # Start WebSocket server for web UI
+        await self.ws_server.start()
+        self.ws_server.set_command_handler(self._handle_ws_command)
+
         logger.info("[ORC] Orchestrator started (WinDivert mode)")
         self.bus.emit("bot.started", {"status": "running"})
 
@@ -101,6 +110,9 @@ class Orchestrator:
                 logger.info("[ORC] WinDivert stopped")
             except Exception as e:
                 logger.debug(f"[ORC] WinDivert stop error: {e}")
+
+        # Stop WebSocket server
+        await self.ws_server.stop()
 
         logger.info("[ORC] Orchestrator stopped")
         self.bus.emit("bot.stopped", {})
@@ -166,6 +178,68 @@ class Orchestrator:
     def get_matching_codes(self):
         """Return current code->name dict."""
         return dict(self.game_state.matching._code_to_name)
+
+    # ------------------------------------------------------------------
+    # WebSocket command handler
+    # ------------------------------------------------------------------
+
+    async def _handle_ws_command(self, action: str, data: dict):
+        """Process commands received from the web UI via WebSocket."""
+        if action == "loadLua":
+            path = data.get("path", "")
+            if path:
+                await self.run_script(path)
+                await self.ws_server.send_log(f"Script demarré: {path}", "success")
+
+        elif action == "stopLua":
+            self.stop_script()
+            await self.ws_server.send_log("Script arrêté.", "warning")
+
+        elif action == "moveTo":
+            cell_id = data.get("cellId")
+            if cell_id is not None and self.navigator:
+                ok = await self.navigator.move_to(int(cell_id))
+                level = "success" if ok else "warning"
+                await self.ws_server.send_log(
+                    f"Déplacement vers {cell_id}: {'OK' if ok else 'échec'}", level)
+
+        elif action == "gather":
+            ok = await self.gather_nearest()
+            level = "success" if ok else "warning"
+            await self.ws_server.send_log(f"Gather: {'OK' if ok else 'échec'}", level)
+
+        elif action == "startSniff":
+            self.start_sniffing()
+            codes = self.get_matching_codes()
+            await self.ws_server.broadcast("SniffMatchingRefresh", codes)
+
+        elif action == "stopSniff":
+            self.stop_sniffing()
+
+        elif action == "saveMatching":
+            self.save_matching()
+            await self.ws_server.send_log("Matching sauvegardé!", "success")
+
+        elif action == "saveSettings":
+            settings = data.get("settings", {})
+            for key, value in settings.items():
+                if hasattr(config, key):
+                    try:
+                        current = getattr(config, key)
+                        if isinstance(current, int):
+                            setattr(config, key, int(value))
+                        elif isinstance(current, float):
+                            setattr(config, key, float(value))
+                        else:
+                            setattr(config, key, value)
+                    except (ValueError, TypeError):
+                        pass
+            await self.ws_server.send_log("Paramètres sauvegardés.", "success")
+
+    async def _broadcast_ws(self, ws_type: str, data: dict):
+        """Broadcast an event to WebSocket clients."""
+        if self.ws_server and self.ws_server.client_count > 0:
+            await self.ws_server.broadcast(ws_type, data)
 
     # ------------------------------------------------------------------
     # Gather command
@@ -261,33 +335,50 @@ class Orchestrator:
                         "code": type_code, "name": name, "is_new": False,
                     })
 
+            # Helper to schedule async WS broadcasts from sync context
+            def _ws(ws_type, payload):
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(self._broadcast_ws(ws_type, payload))
+                except Exception:
+                    pass
+
             # Fallback: emit connected as soon as gs.connected is True
             if gs.connected and not self._connected_emitted:
                 self._connected_emitted = True
-                bus.emit("game.connected", {
+                conn_data = {
                     "name": gs.character.name or f"ID:{gs.character.id}",
                     "level": gs.character.level,
-                })
+                }
+                bus.emit("game.connected", conn_data)
+                _ws("CharacterData", conn_data)
 
             # Re-emit if name was discovered later
             if gs.connected and gs.character.name and gs.character.name != self._last_emitted_name:
                 self._last_emitted_name = gs.character.name
-                bus.emit("game.connected", {
+                conn_data = {
                     "name": gs.character.name,
                     "level": gs.character.level,
-                })
+                }
+                bus.emit("game.connected", conn_data)
+                _ws("CharacterData", conn_data)
 
-            # Emit key game events
+            # Emit key game events (bus + WebSocket)
             if "MapComplementary" in name or "MapData" in name:
-                bus.emit("map.changed", {
+                map_data = {
                     "map_id": gs.map.map_id, "x": gs.map.x, "y": gs.map.y,
-                })
+                }
+                bus.emit("map.changed", map_data)
+                _ws("MapInformation", map_data)
             elif "Harvested" in name or "InteractiveUseEnded" in name:
                 import time
                 if gs._connect_time and (time.time() - gs._connect_time) > 10:
                     bus.emit("gather.completed", {"map_id": gs.map.map_id})
+                    _ws("GatherCompleted", {"map_id": gs.map.map_id})
             elif "FightJoin" in name or "FightStart" in name:
                 bus.emit("fight.started", {})
+                _ws("FightStarted", {})
             return result
 
         gs.process_message = patched_process
