@@ -230,6 +230,20 @@ class Orchestrator:
                             scripts.append(os.path.join(src, name))
             await self.ws_server.broadcast("ScriptList", {"scripts": scripts})
 
+        elif action == "getSettings":
+            settings = {
+                "PROXY_PORT": config.PROXY_PORT,
+                "SERVER_HOSTNAME": config.SERVER_HOSTNAME,
+                "SERVER_PORT": config.SERVER_PORT,
+                "FAKE_LAUNCHER_PORT": getattr(config, "FAKE_LAUNCHER_PORT", 26666),
+                "SCRIPTS_DIR": getattr(config, "SCRIPTS_DIR", "scripts"),
+                "ROUTES_DIR": getattr(config, "ROUTES_DIR", "routes"),
+                "ACTION_DELAY_MIN": getattr(config, "ACTION_DELAY_MIN", 0.3),
+                "ACTION_DELAY_MAX": getattr(config, "ACTION_DELAY_MAX", 0.8),
+                "MAP_CHANGE_DELAY": getattr(config, "MAP_CHANGE_DELAY", 1.2),
+            }
+            await self.ws_server.broadcast("CurrentSettings", settings)
+
         elif action == "saveSettings":
             settings = data.get("settings", {})
             for key, value in settings.items():
@@ -335,15 +349,19 @@ class Orchestrator:
             if self._sniff_mode:
                 size = len(data) if data else 0
                 self._sniff_log.append((type_code, name, direction, size))
-                bus.emit("sniffer.traffic", {
+                traffic_data = {
                     "code": type_code, "name": name,
                     "direction": direction, "size": size,
-                })
+                }
+                bus.emit("sniffer.traffic", traffic_data)
+                _ws("SniffTraffic", traffic_data)
                 # Detect new matches from auto-matcher
                 if name != type_code:
-                    bus.emit("sniffer.match", {
+                    match_data = {
                         "code": type_code, "name": name, "is_new": False,
-                    })
+                    }
+                    bus.emit("sniffer.match", match_data)
+                    _ws("SniffMatch", match_data)
 
             # Helper to schedule async WS broadcasts from sync context
             def _ws(ws_type, payload):
