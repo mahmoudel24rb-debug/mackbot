@@ -19,6 +19,7 @@ Logic:
 
 import asyncio
 import random
+from game.anti_detect import HumanDelay, maybe_pause, pick_resource
 from utils import logger
 
 
@@ -76,10 +77,9 @@ class AutoFarmer:
                 logger.warn(f"[AUTOFARM] Can't reach ({target_x},{target_y}), skipping")
                 continue
 
-            # Anti-detection pause between maps
-            delay = random.uniform(1.0, 3.0)
-            logger.debug(f"[AUTOFARM] Waiting {delay:.1f}s before farming next map")
-            await asyncio.sleep(delay)
+            # Anti-detection: human-like pause between maps
+            delay = await HumanDelay.wait("map_change")
+            logger.debug(f"[AUTOFARM] Waited {delay:.1f}s before farming next map")
 
         logger.info(f"[AUTOFARM] Stopped. Stats: {self._stats}")
 
@@ -106,14 +106,9 @@ class AutoFarmer:
             if not avail:
                 break
 
-            # Sort by distance to player
+            # Pick resource (80% closest, 20% random — anti-detection)
             current = self.gs.character.cell_id
-            if current is not None:
-                from game.map_grid import cell_distance
-                avail.sort(key=lambda r: cell_distance(current, r.cell_id)
-                           if r.cell_id is not None else 9999)
-
-            target = avail[0]
+            target = pick_resource(avail, current)
             logger.info(f"[AUTOFARM] Target: elem={target.element_id} "
                         f"cell={target.cell_id} ({len(avail)} remaining)")
 
@@ -125,7 +120,7 @@ class AutoFarmer:
                     self._stats["failed"] += 1
                     target.enabled = False
                     continue
-                await asyncio.sleep(random.uniform(0.3, 0.8))
+                await HumanDelay.wait("move")
 
             # Gather
             ok = await self.gatherer.gather_resource(target)
@@ -136,7 +131,7 @@ class AutoFarmer:
                 self._stats["failed"] += 1
                 target.enabled = False
 
-            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await HumanDelay.wait("gather")
 
         return gathered
 

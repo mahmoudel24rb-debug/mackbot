@@ -16,6 +16,7 @@ Real client gather sequence (confirmed 2026-03-26):
 import asyncio
 from game.movement import build_c2s_request, build_interact_request, build_pre_interact_request
 from game.map_grid import get_neighbors
+from game.anti_detect import maybe_pause, HumanDelay
 from utils import logger
 
 
@@ -118,6 +119,9 @@ class GatherController:
 
         logger.info(f"  [GATHER] Adjacent at cell {current_cell}, resource at {resource.cell_id}")
 
+        # Anti-detection: random micro-pause before gathering
+        await maybe_pause()
+
         self.game_state.is_busy = True
         self.game_state.busy_reason = "gathering"
 
@@ -161,6 +165,9 @@ class GatherController:
             self.game_state.is_busy = False
             self.game_state.busy_reason = None
             return False
+
+        # Anti-detection: human-like delay before waiting
+        await HumanDelay.wait("gather")
 
         # Wait for kof (InteractiveUseEndedEvent)
         complete = await self.wait_gather_complete(timeout=15.0)

@@ -141,6 +141,11 @@ class Navigator:
 
         self.game_state.character.cell_id = full_path[-1]
         logger.info(f"[NAV] Arrived at cell {full_path[-1]}")
+
+        # Anti-detection: random micro-pause after movement
+        from game.anti_detect import maybe_pause
+        await maybe_pause()
+
         return True
 
     async def _send_segment(self, path):
