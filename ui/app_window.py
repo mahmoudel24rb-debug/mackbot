@@ -39,7 +39,7 @@ class AppWindow(ctk.CTk):
         theme.apply()
         self.title(config.UI_TITLE)
         self.geometry(f"{config.UI_WIDTH}x{config.UI_HEIGHT}")
-        self.minsize(900, 600)
+        self.minsize(960, 640)
         self.configure(fg_color=theme.BG)
 
         # Message queues
@@ -61,24 +61,58 @@ class AppWindow(ctk.CTk):
     # ------------------------------------------------------------------
 
     def _build(self):
+        # Main layout: sidebar (col 0) | content (col 1)
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # Init tabs dict before sidebar (sidebar calls _switch_tab during build)
         self.tabs = {}
 
-        # Sidebar
-        self.sidebar = Sidebar(self, on_tab_change=self._switch_tab)
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        # ── Header bar (top right — character info) ──────────────────
+        self._header = ctk.CTkFrame(
+            self, fg_color=theme.BG_PANEL, height=50, corner_radius=0)
+        self._header.grid(row=0, column=1, sticky="ew")
+        self._header.grid_columnconfigure(0, weight=1)
 
-        # Tab container
-        self._tab_frame = ctk.CTkFrame(self, fg_color=theme.BG,
-                                       corner_radius=0)
-        self._tab_frame.grid(row=0, column=1, sticky="nsew")
+        # Character info in header (right side)
+        char_info = ctk.CTkFrame(self._header, fg_color="transparent")
+        char_info.grid(row=0, column=1, padx=16, pady=8, sticky="e")
+
+        self._header_name = ctk.CTkLabel(
+            char_info, text="Déconnecté",
+            font=theme.FONT_HEAD, text_color=theme.TEXT,
+        )
+        self._header_name.pack(side="right", padx=(8, 0))
+
+        self._header_server = ctk.CTkLabel(
+            char_info, text="",
+            font=theme.FONT_SMALL, text_color=theme.TEXT_DIM,
+        )
+        self._header_server.pack(side="right", padx=(8, 0))
+
+        # Character avatar
+        self._header_avatar = ctk.CTkLabel(
+            char_info, text="?",
+            font=("Segoe UI", 12, "bold"),
+            text_color=theme.BG,
+            fg_color=theme.ACCENT_DIM,
+            corner_radius=16,
+            width=32, height=32,
+        )
+        self._header_avatar.pack(side="right", padx=(0, 4))
+
+        # ── Sidebar ─────────────────────────────────────────────────
+        self.sidebar = Sidebar(self, on_tab_change=self._switch_tab)
+        self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
+
+        # ── Tab container ────────────────────────────────────────────
+        self._tab_frame = ctk.CTkFrame(
+            self, fg_color=theme.BG, corner_radius=0)
+        self._tab_frame.grid(row=1, column=1, sticky="nsew")
         self._tab_frame.grid_columnconfigure(0, weight=1)
         self._tab_frame.grid_rowconfigure(0, weight=1)
 
-        # Create tabs
+        # ── Create tabs ─────────────────────────────────────────────
         self.tabs = {
             "dashboard": DashboardTab(self._tab_frame),
             "harvest":   HarvestTab(
@@ -94,7 +128,8 @@ class AppWindow(ctk.CTk):
                 on_stop_sniff=self._on_stop_sniff,
                 on_save_matching=self._on_save_matching,
             ),
-            "settings":  SettingsTab(self._tab_frame, on_save=self._on_settings_save),
+            "settings":  SettingsTab(
+                self._tab_frame, on_save=self._on_settings_save),
         }
         for tab in self.tabs.values():
             tab.grid(row=0, column=0, sticky="nsew")
@@ -107,13 +142,15 @@ class AppWindow(ctk.CTk):
     def _switch_tab(self, name: str):
         if not self.tabs:
             return  # Tabs not created yet (sidebar init)
+        # Ignore disabled tabs (fight, market, fm)
+        if name not in self.tabs:
+            return
         for tab in self.tabs.values():
             tab.grid_remove()
-        if name in self.tabs:
-            self.tabs[name].grid()
+        self.tabs[name].grid()
 
     # ------------------------------------------------------------------
-    # Bot thread
+    # Bot thread (unchanged logic)
     # ------------------------------------------------------------------
 
     def _start_bot_thread(self):
@@ -186,7 +223,6 @@ class AppWindow(ctk.CTk):
             try:
                 cmd = await asyncio.wait_for(self._cmd_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
-                # Periodic status push
                 if self._orchestrator:
                     self._ui_queue.put(("status", self._orchestrator.get_status()))
                 continue
@@ -211,7 +247,6 @@ class AppWindow(ctk.CTk):
 
             elif action == "start_sniff":
                 self._orchestrator.start_sniffing()
-                # Send current matching to UI
                 codes = self._orchestrator.get_matching_codes()
                 self._ui_queue.put(("sniff_matching_refresh", codes))
 
@@ -308,15 +343,30 @@ class AppWindow(ctk.CTk):
 
         elif kind == "connected":
             data = msg[1]
-            self.sidebar.set_connected(
-                data.get("name"), data.get("level"), data.get("server"))
+            name = data.get("name")
+            level = data.get("level")
+            server = data.get("server")
+
+            # Update sidebar
+            self.sidebar.set_connected(name, level, server)
+
+            # Update header
+            display = name or "?"
+            if level:
+                display += f"  Nv.{level}"
+            self._header_name.configure(text=display)
+            self._header_server.configure(text=server or "")
+            if name:
+                self._header_avatar.configure(text=name[0].upper())
+
             self.tabs["harvest"].append_log(
-                f"Connecte: {data.get('name')}", "success")
+                f"Connecté: {name}", "success")
 
         elif kind == "map_changed":
             data = msg[1]
             self.tabs["harvest"].append_log(
-                f"Map changée → {data.get('map_id')} ({data.get('x')},{data.get('y')})", "nav")
+                f"Map changée → {data.get('map_id')} "
+                f"({data.get('x')},{data.get('y')})", "nav")
 
         elif kind == "gather_completed":
             self.tabs["harvest"].record_harvest()
@@ -344,17 +394,50 @@ class AppWindow(ctk.CTk):
             self.tabs["sniffer"].refresh_matching(codes)
 
     def _refresh_map_view(self, game_state):
-        """Update the map canvas from current game state."""
+        """Update the map canvas from current game state with KWW data."""
         try:
-            from game.map_grid import MapGrid
             grid = self._orchestrator.navigator.grid if self._orchestrator else None
             if grid is None:
                 return
-            walkable = set(grid.walkable_cells) if hasattr(grid, "walkable_cells") else set()
-            map_change = set(grid.map_change_data.keys()) if hasattr(grid, "map_change_data") else set()
+
+            # Get walkable cells (from KWW or cache)
+            walkable = getattr(game_state, '_walkable_cells', None)
+            if walkable is None:
+                # Fallback: use grid walkable array
+                walkable = {i for i in range(560) if grid.walkable[i]}
+
+            # Get special cell properties from KWW
+            special_cells = getattr(game_state, '_pending_kww_cells', None) or {}
+
+            # Map change data
+            map_change = grid.map_change_data if hasattr(grid, 'map_change_data') else {}
+
+            # Resources
             resources = game_state.map.resources or []
+
+            # Character position
             char_cell = game_state.character.cell_id
-            self.tabs["map_view"].render_map(walkable, map_change, resources, char_cell)
+
+            # Entities
+            entities = game_state.entities
+
+            # Map coordinates
+            map_coords = None
+            if game_state.map.x is not None:
+                map_coords = (game_state.map.x, game_state.map.y)
+
+            map_id = game_state.map.map_id
+
+            self.tabs["map_view"].render_map(
+                walkable=walkable,
+                special_cells=special_cells,
+                map_change=map_change,
+                resources=resources,
+                char_cell=char_cell,
+                entities=entities,
+                map_coords=map_coords,
+                map_id=map_id,
+            )
         except Exception:
             pass
 

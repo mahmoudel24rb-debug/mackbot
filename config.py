@@ -37,7 +37,8 @@ UI_THEME     = "dark"           # "dark" or "light"
 UI_ACCENT    = "#4caf50"        # Green accent colour (Jitsuri-inspired)
 UI_WIDTH     = 1200
 UI_HEIGHT    = 700
-UI_TITLE     = "DofusBot"
+UI_TITLE     = "MackBot"
+UI_VERSION   = "1.0"
 
 # Anti-detection delays (seconds)
 ACTION_DELAY_MIN  = 0.3
