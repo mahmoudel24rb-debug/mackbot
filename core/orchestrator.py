@@ -220,6 +220,16 @@ class Orchestrator:
             self.save_matching()
             await self.ws_server.send_log("Matching sauvegardé!", "success")
 
+        elif action == "getScripts":
+            import os
+            scripts = []
+            for src in ["scripts", "fix script"]:
+                if os.path.isdir(src):
+                    for name in sorted(os.listdir(src)):
+                        if name.endswith((".lua", ".py")):
+                            scripts.append(os.path.join(src, name))
+            await self.ws_server.broadcast("ScriptList", {"scripts": scripts})
+
         elif action == "saveSettings":
             settings = data.get("settings", {})
             for key, value in settings.items():
