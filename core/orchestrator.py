@@ -371,6 +371,35 @@ class Orchestrator:
                 }
                 bus.emit("map.changed", map_data)
                 _ws("MapInformation", map_data)
+
+                # Broadcast cell data for map renderer
+                walkable = getattr(gs, '_walkable_cells', set()) or set()
+                special = getattr(gs, '_pending_kww_cells', {}) or {}
+                mc_data = {}
+                if self.navigator and self.navigator.grid:
+                    mc_data = self.navigator.grid.map_change_data
+                cells_data = []
+                for cid in range(560):
+                    cells_data.append({
+                        "cellNumber": cid,
+                        "mov": cid in walkable or not walkable,
+                        "los": cid not in special,
+                        "mapChangeData": mc_data.get(cid, 0),
+                    })
+                _ws("MapCellData", {"cells": cells_data, "mapId": gs.map.map_id})
+
+                # Broadcast entity positions
+                ent_list = []
+                for eid, entity in gs.entities.items():
+                    cell = entity.get("cell_id") if isinstance(entity, dict) else getattr(entity, "cell_id", None)
+                    ent_list.append({
+                        "id": eid, "cellId": cell,
+                        "type": entity.get("entity_type") if isinstance(entity, dict) else getattr(entity, "entity_type", None),
+                    })
+                _ws("MapEntities", {
+                    "entities": ent_list,
+                    "characterCellId": gs.character.cell_id,
+                })
             elif "Harvested" in name or "InteractiveUseEnded" in name:
                 import time
                 if gs._connect_time and (time.time() - gs._connect_time) > 10:

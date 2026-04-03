@@ -103,7 +103,16 @@
             </section>
 
             <section id="tab-map" class="tab-content">
-                <div class="placeholder-msg">Carte — Phase 4</div>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 14px; color: var(--text-dim);" id="map-cell-info"></span>
+                    </div>
+                    <span class="badge badge-green" id="map-coords-badge"></span>
+                </div>
+                <div id="map-container" style="background: var(--bg-card); border-radius: var(--radius-lg); padding: 8px; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 450px;">
+                    <canvas id="map-canvas"></canvas>
+                </div>
+                <div id="map-legend" style="display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap;"></div>
             </section>
 
             <section id="tab-sniffer" class="tab-content">
@@ -121,6 +130,7 @@
     <script src="js/store.js"></script>
     <script src="js/dashboard.js"></script>
     <script src="js/logs.js"></script>
+    <script src="js/map-renderer.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
