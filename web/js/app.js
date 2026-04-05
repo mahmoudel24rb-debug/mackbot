@@ -90,12 +90,25 @@
 
         const dot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
-        dot.classList.toggle('connected', connected);
-        dot.classList.toggle('disconnected', !connected);
-        statusText.textContent = connected ? 'Connecte' : 'Deconnecte';
-        statusText.style.color = connected ? 'var(--text-green)' : 'var(--text-dim)';
 
-        const name = character.name || 'Deconnecte';
+        if (!connected) {
+            dot.classList.remove('connected');
+            dot.classList.add('disconnected');
+            statusText.textContent = 'En attente de connexion...';
+            statusText.style.color = 'var(--text-dim)';
+        } else if (!character.name) {
+            dot.classList.add('connected');
+            dot.classList.remove('disconnected');
+            statusText.textContent = 'Connecte (chargement...)';
+            statusText.style.color = 'var(--text-yellow)';
+        } else {
+            dot.classList.add('connected');
+            dot.classList.remove('disconnected');
+            statusText.textContent = 'Connecte';
+            statusText.style.color = 'var(--text-green)';
+        }
+
+        const name = character.name || (connected ? 'Chargement...' : 'Deconnecte');
         const displayName = character.level ? `${name}  Nv.${character.level}` : name;
         const initial = character.name ? character.name[0].toUpperCase() : '?';
 

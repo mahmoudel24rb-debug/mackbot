@@ -181,8 +181,12 @@ def _fallback_browser():
 
 def main():
     """Main entry point."""
+    import datetime
+
     logger.info("=" * 50)
-    logger.info("  MackBot — Starting...")
+    logger.info(f"  MackBot v{getattr(config, 'UI_VERSION', '1.0')}")
+    logger.info(f"  {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"  Python {sys.version.split()[0]}")
     logger.info("=" * 50)
 
     # Kill leftover processes on our ports
