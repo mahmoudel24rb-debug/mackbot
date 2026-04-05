@@ -366,6 +366,19 @@ def handle_map_info(state, data, direction, uid):
         state.pos_ref = map_id
         logger.info(f"  -> MapId: {map_id}")
 
+        # Extract map coordinates from MapCoordinates lookup (since iaa is unreliable)
+        try:
+            from game.map_coordinates import MapCoordinates
+            if not hasattr(state, '_map_coords_lookup'):
+                state._map_coords_lookup = MapCoordinates()
+            if state._map_coords_lookup.is_loaded():
+                pos = state._map_coords_lookup.get_position(map_id)
+                if pos:
+                    state.map.x, state.map.y = pos[0], pos[1]
+                    logger.info(f"  -> Map coordinates from lookup: ({pos[0]}, {pos[1]})")
+        except Exception:
+            pass
+
         # Apply pending walkable grid from KWW (received just before ISU)
         pending = getattr(state, '_pending_walkable', None)
         if pending is not None:
@@ -1024,8 +1037,9 @@ def handle_ipi_move_request(state, data, direction, uid):
             if state.character.cell_id is None or state._needs_cell_update:
                 logger.info(f"  -> Spawn cell detected: {cells[0]}")
                 state._needs_cell_update = False
-            # Set cells[0] as current position (start), NOT cells[-1] (destination)
-            state.character.cell_id = cells[0]
+            # Set cells[-1] as current position (destination the client is moving to)
+            # cells[0] is the starting position, cells[-1] is where the client will arrive
+            state.character.cell_id = cells[-1]
             logger.info(f"  -> Cell: {cells[0]} -> {cells[-1]} ({len(cells)} steps)")
 
             # Learn walkable cells from real client's accepted MoveRequests

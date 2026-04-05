@@ -140,6 +140,16 @@ class ScriptEngine:
         self._running = False
         self._stop_event = asyncio.Event()
 
+        # Pre-init MapCoordinates for route resolution
+        from game.map_coordinates import MapCoordinates
+        self._map_coords = MapCoordinates()
+        if self._map_coords.is_loaded():
+            logger.info(f"[SCRIPT] MapCoordinates loaded: {self._map_coords}")
+
+        # Pre-init ZaapDatabase
+        from game.zaap_data import ZaapDatabase
+        self._zaap_db = ZaapDatabase()
+
         # Script-defined values (loaded from Lua globals)
         self.elements_to_gather = set()    # resource type IDs
         self.max_pods = 90
@@ -349,32 +359,39 @@ class ScriptEngine:
             logger.error(f"[SCRIPT] Cannot resolve target map: {expected}")
             return False
 
-        # Decide: zaap or walk?
-        from game.zaap_data import ZaapDatabase
-        if not hasattr(self, '_zaap_db'):
-            self._zaap_db = ZaapDatabase()
-
+        # Get target coordinates (from expected string or from lookup)
         target_x, target_y = None, None
-        if not hasattr(self, '_map_coords'):
-            from game.map_coordinates import MapCoordinates
-            self._map_coords = MapCoordinates()
-        if self._map_coords.is_loaded():
+        if "," in expected:
+            try:
+                parts = expected.split(",")
+                target_x, target_y = int(parts[0].strip()), int(parts[1].strip())
+            except (ValueError, TypeError):
+                pass
+        if target_x is None and self._map_coords.is_loaded():
             target_pos = self._map_coords.get_position(target_map_id)
             if target_pos:
                 target_x, target_y = target_pos
 
         current_x = self.game_state.map.x
         current_y = self.game_state.map.y
+        current_map = self.game_state.map.map_id
 
+        # Decide: zaap or walk?
         if (target_x is not None and current_x is not None
                 and self._zaap_db.should_use_zaap(current_x, current_y, target_x, target_y)):
             logger.info(f"[SCRIPT] Using zaap: ({current_x},{current_y}) -> ({target_x},{target_y})")
             ok = await self.navigator.travel_to_via_zaap(target_x, target_y, target_map_id)
-        else:
+        elif current_map and self.navigator.world_graph.is_loaded():
             if target_x is not None and current_x is not None:
                 dist = abs(current_x - target_x) + abs(current_y - target_y)
                 logger.info(f"[SCRIPT] Walking {dist} maps to ({target_x},{target_y})")
+            else:
+                logger.info(f"[SCRIPT] Walking to mapId {target_map_id}")
             ok = await self.navigator.travel_to(target_map_id)
+        else:
+            logger.error(f"[SCRIPT] Cannot navigate: current_map={current_map}, "
+                        f"worldgraph loaded={self.navigator.world_graph.is_loaded()}")
+            ok = False
 
         if ok:
             logger.info(f"[SCRIPT] Successfully navigated to map {expected}")
