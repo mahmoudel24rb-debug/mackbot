@@ -350,6 +350,15 @@ class Orchestrator:
             result = orig_process(type_code, data, direction, uid)
             name = gs.matching.get_name(type_code)
 
+            # Helper to schedule async WS broadcasts from sync context
+            def _ws(ws_type, payload):
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(self._broadcast_ws(ws_type, payload))
+                except Exception:
+                    pass
+
             # Sniffer: emit traffic to UI
             if self._sniff_mode:
                 size = len(data) if data else 0
@@ -367,15 +376,6 @@ class Orchestrator:
                     }
                     bus.emit("sniffer.match", match_data)
                     _ws("SniffMatch", match_data)
-
-            # Helper to schedule async WS broadcasts from sync context
-            def _ws(ws_type, payload):
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.ensure_future(self._broadcast_ws(ws_type, payload))
-                except Exception:
-                    pass
 
             # Fallback: emit connected as soon as gs.connected is True
             if gs.connected and not self._connected_emitted:
