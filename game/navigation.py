@@ -320,6 +320,38 @@ class Navigator:
             logger.warn(f"[NAV] Expected map {target_map_id}, got {self.game_state.map.map_id}")
         return arrived
 
+    async def travel_to_via_zaap(self, target_x, target_y, target_map_id):
+        """
+        Travel to a distant map using zaap (like Jitsuri's GoToNearestZaap).
+
+        Flow:
+        1. Enter havre-sac
+        2. Interact with zaap
+        3. Select destination (nearest zaap to target)
+        4. Walk remaining distance via WorldGraph
+
+        NOTE: Steps 1-3 require sniffing the zaap protocol first.
+        Currently falls back to walking via WorldGraph.
+        """
+        from game.zaap_data import ZaapDatabase
+
+        if not hasattr(self, '_zaap_db'):
+            self._zaap_db = ZaapDatabase()
+
+        nearest, zaap_dist = self._zaap_db.find_nearest(target_x, target_y)
+        if nearest is None:
+            logger.warn("[NAV] No zaaps known — walking instead")
+            return await self.travel_to(target_map_id)
+
+        logger.info(f"[NAV] Zaap plan: teleport to ({nearest.x},{nearest.y}) "
+                    f"then walk {zaap_dist} maps to ({target_x},{target_y})")
+
+        # TODO: Implement havre-sac entry + zaap interaction
+        # Requires sniffing the protocol (see PLAN_PHASE4.md step 4.2)
+        # For now, fall back to walking
+        logger.warn("[NAV] Zaap teleport not yet implemented — walking via WorldGraph")
+        return await self.travel_to(target_map_id)
+
     async def follow_route(self, route):
         """
         Follow a route of map changes.

@@ -349,13 +349,38 @@ class ScriptEngine:
             logger.error(f"[SCRIPT] Cannot resolve target map: {expected}")
             return False
 
-        ok = await self.navigator.travel_to(target_map_id)
+        # Decide: zaap or walk?
+        from game.zaap_data import ZaapDatabase
+        if not hasattr(self, '_zaap_db'):
+            self._zaap_db = ZaapDatabase()
+
+        target_x, target_y = None, None
+        if not hasattr(self, '_map_coords'):
+            from game.map_coordinates import MapCoordinates
+            self._map_coords = MapCoordinates()
+        if self._map_coords.is_loaded():
+            target_pos = self._map_coords.get_position(target_map_id)
+            if target_pos:
+                target_x, target_y = target_pos
+
+        current_x = self.game_state.map.x
+        current_y = self.game_state.map.y
+
+        if (target_x is not None and current_x is not None
+                and self._zaap_db.should_use_zaap(current_x, current_y, target_x, target_y)):
+            logger.info(f"[SCRIPT] Using zaap: ({current_x},{current_y}) -> ({target_x},{target_y})")
+            ok = await self.navigator.travel_to_via_zaap(target_x, target_y, target_map_id)
+        else:
+            if target_x is not None and current_x is not None:
+                dist = abs(current_x - target_x) + abs(current_y - target_y)
+                logger.info(f"[SCRIPT] Walking {dist} maps to ({target_x},{target_y})")
+            ok = await self.navigator.travel_to(target_map_id)
+
         if ok:
             logger.info(f"[SCRIPT] Successfully navigated to map {expected}")
-            return True
         else:
             logger.error(f"[SCRIPT] Failed to navigate to map {expected}")
-            return False
+        return ok
 
     def _resolve_target_map(self, map_str):
         """Resolve a map string (mapId or 'x,y' coords) to a numeric mapId."""
