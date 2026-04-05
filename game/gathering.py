@@ -64,10 +64,16 @@ class GatherController:
         return await self.movement.send_packet(packet)
 
     async def send_interact(self, element_id):
-        """Send InteractiveUseRequest (itl) — f1=elementId ONLY."""
-        code = self.game_state.matching.get_code("InteractiveUseRequest")
+        """Send InteractiveUseRequest using the code the real client uses."""
+        from game.message_handlers import get_sniffed_interactive_code
+
+        # Prefer the code sniffed from the real client this session
+        code = get_sniffed_interactive_code()
         if not code:
-            logger.error("[GATHER] InteractiveUseRequest code unknown")
+            code = self.game_state.matching.get_code("InteractiveUseRequest")
+        if not code:
+            logger.error("[GATHER] InteractiveUseRequest code unknown — "
+                         "play manually once to let the sniffer learn the code")
             return False
         inner = build_interact_request(element_id)
         packet = build_c2s_request(code, inner, self.movement._next_uid())

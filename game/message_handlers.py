@@ -17,6 +17,14 @@ import config
 # Seconds after CharacterLoaded to ignore FightStart (init burst filter)
 _INIT_GRACE_PERIOD = 10
 
+# Track which code the real client uses for InteractiveUseRequest (itl or idh)
+_sniffed_interactive_use_code = None
+
+
+def get_sniffed_interactive_code():
+    """Return the last sniffed InteractiveUseRequest code ('itl' or 'idh'), or None."""
+    return _sniffed_interactive_use_code
+
 
 def _decode(data):
     """Shortcut: decode protobuf fields from bytes, return empty list if None."""
@@ -257,38 +265,24 @@ def handle_map_coordinates(state, data, direction, uid):
 # Low 12 bits might be cell ID, upper bits may be map/entity ref
 
 def handle_current_cell(state, data, direction, uid):
-    """Parse CurrentCellId (iny) - position reference after map change.
-    f1 (varint) = pos_ref (composite: mapId, used in ipi.f2 and ioh.f2)
-    Try to extract cellId from low bits.
+    """Parse CurrentCellId (iny) — saves pos_ref for movement packets.
+
+    IMPORTANT: iny.f1 is a composite position reference, NOT a cellId.
+    It is used in ipi.f2 and ioh.f2 for movement requests.
+    The real cellId after map change comes from:
+      1. The first MoveRequest (C2S) sniffed on the new map
+      2. The first MoveEvent (S2C) received after map change
+
+    DO NOT set state.character.cell_id here — it causes mismatches.
     """
     if direction != "s2c":
         return
     fields = _decode(data)
-
-    for fn, wt, val in fields:
-        if fn == 1 and wt == WIRE_VARINT:
-            state.pos_ref = val
-
-            # Try multiple extraction strategies for cellId
-            candidates = [
-                ("low10", val & 0x3FF),
-                ("low12", val & 0xFFF),
-                ("mid10", (val >> 10) & 0x3FF),
-                ("mid12", (val >> 12) & 0x3FF),
-            ]
-            logger.info(f"  -> iny pos_ref=0x{val:08X} candidates={[(l,c) for l,c in candidates if 0<=c<560]}")
-
-            for label, candidate in candidates:
-                if 0 <= candidate < 560:
-                    old = state.character.cell_id
-                    state.character.cell_id = candidate
-                    logger.info(f"  -> Cell from iny ({label}): {candidate} (was {old})")
-                    break
-        elif wt == WIRE_VARINT:
-            logger.debug(f"    iny f{fn}(varint): {val}")
-        elif wt == WIRE_LENGTH_DELIMITED:
-            hex_str = " ".join(f"{b:02x}" for b in val[:32])
-            logger.debug(f"    iny f{fn}(bytes, {len(val)}): {hex_str}")
+    val = _get_varint(fields, 1)
+    if val is not None:
+        state.pos_ref = val
+        logger.info(f"  -> iny pos_ref=0x{val:08X} (saved for movement, NOT a cellId)")
+        state._needs_cell_update = True
 
 
 # ---------------------------------------------------------------------------
@@ -1006,11 +1000,11 @@ def handle_ipi_move_request(state, data, direction, uid):
             if state.character.cell_id is not None and state.character.cell_id != cells[0]:
                 logger.warn(f"  -> CELL MISMATCH: state says {state.character.cell_id}, "
                             f"but real client starts from {cells[0]}!")
-            # If cell was None (after map change), cells[0] reveals the spawn cell
-            if state.character.cell_id is None:
+            # If cell was None or needs update (after map change), cells[0] is the real position
+            if state.character.cell_id is None or state._needs_cell_update:
                 logger.info(f"  -> Spawn cell detected: {cells[0]}")
+                state._needs_cell_update = False
             # Set cells[0] as current position (start), NOT cells[-1] (destination)
-            # The destination will be set by handle_ion_move_event when server confirms
             state.character.cell_id = cells[0]
             logger.info(f"  -> Cell: {cells[0]} -> {cells[-1]} ({len(cells)} steps)")
 
@@ -1069,6 +1063,9 @@ def handle_ion_move_event(state, data, direction, uid):
 
         if is_player and cells:
             state.character.cell_id = cells[-1]
+            if state._needs_cell_update:
+                logger.info(f"  -> Cell resolved after map change: {cells[-1]}")
+                state._needs_cell_update = False
             logger.info(f"  -> MOVE EVENT (PLAYER): {cells[0]} -> {cells[-1]} ({len(cells)} cells)")
         elif actor_id and cells:
             if actor_id in state.entities:
@@ -1185,6 +1182,20 @@ def handle_interact_check_request(state, data, direction, uid):
     if data:
         tree = decode_protobuf_recursive(data, max_depth=3)
         logger.debug(f"    [itk decoded]:\n{format_proto_tree(tree)}")
+
+
+def handle_interactive_use_request_sniff(state, data, direction, uid):
+    """Sniff which code (itl or idh) the real client uses for InteractiveUseRequest."""
+    global _sniffed_interactive_use_code
+    if direction == "c2s":
+        code = getattr(state, '_current_type_code', None)
+        if code in ("itl", "idh"):
+            _sniffed_interactive_use_code = code
+            logger.info(f"  -> Sniffed InteractiveUseRequest code: {code}")
+    fields = _decode(data)
+    elem_id = _get_varint(fields, 1)
+    if elem_id and direction == "c2s":
+        logger.info(f"  -> Client InteractiveUseRequest: elem={elem_id}")
 
 
 def handle_gather_ready(state, data, direction, uid):
@@ -1575,6 +1586,9 @@ def register_all_handlers(game_state):
         # Interaction pre-check (debug sniffing)
         "itk": handle_interact_check_request,
         "ite": handle_interact_check_response,
+        # Dual code InteractiveUseRequest — register BOTH for sniffing
+        "itl": handle_interactive_use_request_sniff,
+        "idh": handle_interactive_use_request_sniff,
         # Phase 4: debug handlers for unknown large messages
         "kww": handle_kww_pre_map,
         "ial": handle_ial_large_data,

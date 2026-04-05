@@ -139,6 +139,8 @@ class GameState:
         # Gather sequence flags
         self.interaction_check_ok = False   # Set True when ite (InteractiveUseCheckResponse) arrives
         self.last_harvest_complete = False  # Set True when kof (InteractiveUseEndedEvent) arrives
+        # Cell tracking after map change
+        self._needs_cell_update = False  # Set True by iny, cleared by MoveEvent
         # IAL cell properties for walkability analysis
         self.ial_cell_properties = {}  # cellId -> [f1_values]
         # Load persisted walkable cache
@@ -202,6 +204,7 @@ class GameState:
         handler = self._handlers.get(name) or self._handlers.get(type_code)
         if handler:
             try:
+                self._current_type_code = type_code
                 handler(self, data, direction, uid)
             except Exception as e:
                 logger.error(f"Handler error for {name} ({type_code}): {e}")

@@ -23,6 +23,38 @@ import config
 from utils import logger
 
 
+def kill_residual_ports():
+    """Kill any processes using our ports (leftover from Jitsuri or previous sessions)."""
+    import subprocess as _sp
+
+    if sys.platform != "win32":
+        return
+
+    ports_to_check = [
+        getattr(config, "WS_PORT", 7777),
+        getattr(config, "PROXY_PORT", 5555),
+        8080,
+    ]
+
+    for port in ports_to_check:
+        try:
+            result = _sp.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True, text=True, timeout=5,
+                encoding='utf-8', errors='replace',
+            )
+            for line in result.stdout.split("\n"):
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = parts[-1]
+                    if pid.isdigit() and int(pid) != os.getpid():
+                        logger.warn(f"Port {port} occupied by PID {pid} — killing")
+                        _sp.run(["taskkill", "/F", "/PID", pid],
+                                capture_output=True, timeout=5)
+        except Exception as e:
+            logger.debug(f"Port cleanup error for {port}: {e}")
+
+
 def start_bot_backend():
     """
     Start the bot backend in a background thread.
@@ -152,6 +184,9 @@ def main():
     logger.info("=" * 50)
     logger.info("  MackBot — Starting...")
     logger.info("=" * 50)
+
+    # Kill leftover processes on our ports
+    kill_residual_ports()
 
     # Start bot backend in background thread
     bot_thread = threading.Thread(
