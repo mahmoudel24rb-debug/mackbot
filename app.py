@@ -56,10 +56,13 @@ async def _bot_main(loop):
     logger.info(f"Bot backend started. WebSocket on ws://localhost:{config.WS_PORT}")
     logger.info("Lancez Dofus...")
 
-    # Keep running until interrupted
+    # Keep running — broadcast status periodically to WS clients
     try:
         while True:
             await asyncio.sleep(1)
+            if orchestrator.ws_server and orchestrator.ws_server.client_count > 0:
+                status = orchestrator.get_status()
+                await orchestrator.ws_server.broadcast("Status", status)
     except asyncio.CancelledError:
         pass
     finally:
