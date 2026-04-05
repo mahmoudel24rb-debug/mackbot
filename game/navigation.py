@@ -30,6 +30,10 @@ class Navigator:
         self.grid = MapGrid()
         self.movement = MovementController(game_state)
         self.world_graph = WorldGraph()
+        if self.world_graph.is_loaded():
+            logger.info(f"[NAV] WorldGraph loaded: {len(self.world_graph._graph)} maps")
+        else:
+            logger.warn("[NAV] WorldGraph not loaded — inter-map navigation unavailable")
 
     def set_server_writer(self, writer):
         """Set the server writer for sending packets."""

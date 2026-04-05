@@ -218,8 +218,11 @@ class ScriptEngine:
 
     async def run(self, loop=True):
         """
-        Execute the farming route. If loop=True, repeats indefinitely.
-        Call stop() to halt.
+        Execute the farming route with Jitsuri-style dynamic matching:
+        1. Find which route step matches our current map
+        2. If no match -> navigate to first step's map
+        3. Execute from matching step to end of route
+        4. Loop when finished
         """
         if not self._route:
             logger.error("[SCRIPT] No route loaded")
@@ -234,17 +237,36 @@ class ScriptEngine:
                 iteration += 1
                 logger.info(f"[SCRIPT] === Route iteration {iteration} ===")
 
-                for i, step in enumerate(self._route):
+                # Find the step matching our current map
+                start_index = self._find_matching_step_index()
+
+                if start_index is None:
+                    # Not on any route map - navigate to first step
+                    first_map = self._route[0].map_id
+                    logger.warn(f"[SCRIPT] Not on any route map. "
+                                f"Navigating to first step: {first_map}")
+                    ok = await self._ensure_on_map(first_map)
+                    if not ok:
+                        logger.error("[SCRIPT] Failed to reach first route map. "
+                                     "Retrying in 5s...")
+                        await asyncio.sleep(5)
+                        continue
+                    start_index = 0
+
+                # Execute steps from the matching point
+                for i in range(start_index, len(self._route)):
                     if self._stop_event.is_set():
                         break
 
+                    step = self._route[i]
                     logger.info(f"[SCRIPT] Step {i+1}/{len(self._route)}: {step}")
 
-                    # Wait until we are on the right map
+                    # Verify we're on the right map (navigate if needed)
                     ok = await self._ensure_on_map(step.map_id)
                     if not ok:
-                        logger.warn(f"[SCRIPT] Not on expected map {step.map_id}, "
-                                    f"current={self.game_state.map.map_id}")
+                        logger.warn(f"[SCRIPT] Cannot reach map {step.map_id}, "
+                                    f"re-matching route...")
+                        break  # Re-enter while loop to re-match
 
                     # Gather if requested
                     if step.gather and self.elements_to_gather:
@@ -277,17 +299,127 @@ class ScriptEngine:
     # ------------------------------------------------------------------
 
     async def _ensure_on_map(self, expected_map_id):
-        """Verify we're on the expected map. Log warning if not."""
+        """
+        Verify we're on the expected map. If not, navigate there via WorldGraph.
+
+        Matches by mapId (string) or coordinates "x,y".
+        """
         if not expected_map_id:
             return True
-        current = self.game_state.map.map_id
-        if current is None:
-            logger.warn("[SCRIPT] Map ID unknown")
-            return False
-        if str(current) == str(expected_map_id):
+
+        current = str(self.game_state.map.map_id or "")
+        expected = str(expected_map_id)
+
+        # Direct mapId match
+        if current == expected:
             return True
-        logger.warn(f"[SCRIPT] Map mismatch: expected {expected_map_id}, on {current}")
-        return False
+
+        # Match by coordinates (scripts can use "x,y" format)
+        if "," in expected:
+            try:
+                parts = expected.split(",")
+                ex, ey = int(parts[0].strip()), int(parts[1].strip())
+                cx, cy = self.game_state.map.x, self.game_state.map.y
+                if cx == ex and cy == ey:
+                    return True
+            except (ValueError, TypeError):
+                pass
+        else:
+            # Expected is mapId — check if coords match
+            if not hasattr(self, '_map_coords'):
+                from game.map_coordinates import MapCoordinates
+                self._map_coords = MapCoordinates()
+            if self._map_coords.is_loaded():
+                try:
+                    expected_pos = self._map_coords.get_position(int(expected))
+                    if expected_pos:
+                        cx, cy = self.game_state.map.x, self.game_state.map.y
+                        if cx == expected_pos[0] and cy == expected_pos[1]:
+                            logger.info(f"[SCRIPT] Coords match ({cx},{cy}) "
+                                        f"even though mapId differs")
+                            return True
+                except (ValueError, TypeError):
+                    pass
+
+        # Not on the right map — navigate there
+        logger.info(f"[SCRIPT] Map mismatch: on {current}, need {expected}. Navigating...")
+
+        target_map_id = self._resolve_target_map(expected)
+        if target_map_id is None:
+            logger.error(f"[SCRIPT] Cannot resolve target map: {expected}")
+            return False
+
+        ok = await self.navigator.travel_to(target_map_id)
+        if ok:
+            logger.info(f"[SCRIPT] Successfully navigated to map {expected}")
+            return True
+        else:
+            logger.error(f"[SCRIPT] Failed to navigate to map {expected}")
+            return False
+
+    def _resolve_target_map(self, map_str):
+        """Resolve a map string (mapId or 'x,y' coords) to a numeric mapId."""
+        try:
+            return int(map_str)
+        except (ValueError, TypeError):
+            pass
+
+        if "," in str(map_str):
+            try:
+                parts = str(map_str).split(",")
+                x, y = int(parts[0].strip()), int(parts[1].strip())
+                if not hasattr(self, '_map_coords'):
+                    from game.map_coordinates import MapCoordinates
+                    self._map_coords = MapCoordinates()
+                if self._map_coords.is_loaded():
+                    candidates = self._map_coords.get_map_ids(x, y)
+                    if candidates:
+                        return candidates[0]
+            except (ValueError, TypeError):
+                pass
+
+        return None
+
+    def _find_matching_step_index(self):
+        """
+        Find the route step that matches our current map.
+        Tries: mapId string match, coords "x,y" match, coord lookup.
+        Returns step index or None.
+        """
+        current_map = str(self.game_state.map.map_id or "")
+        current_x = self.game_state.map.x
+        current_y = self.game_state.map.y
+        current_coords = f"{current_x},{current_y}" if current_x is not None else None
+
+        for i, step in enumerate(self._route):
+            step_map = str(step.map_id) if step.map_id else ""
+
+            # Match by mapId
+            if step_map == current_map:
+                logger.debug(f"[SCRIPT] Matched step {i} by mapId: {step_map}")
+                return i
+
+            # Match by coordinates
+            if current_coords and step_map == current_coords:
+                logger.debug(f"[SCRIPT] Matched step {i} by coords: {step_map}")
+                return i
+
+            # Match by coord lookup (step mapId -> coords -> compare)
+            if step_map.lstrip("-").isdigit() and current_coords:
+                if not hasattr(self, '_map_coords'):
+                    from game.map_coordinates import MapCoordinates
+                    self._map_coords = MapCoordinates()
+                if self._map_coords.is_loaded():
+                    try:
+                        step_pos = self._map_coords.get_position(int(step_map))
+                        if step_pos and f"{step_pos[0]},{step_pos[1]}" == current_coords:
+                            logger.debug(f"[SCRIPT] Matched step {i} by coord lookup")
+                            return i
+                    except (ValueError, TypeError):
+                        pass
+
+        logger.debug(f"[SCRIPT] No matching step for map {current_map} ({current_coords})")
+        return None
 
     async def _do_gather(self):
         """Harvest all available resources of the configured types."""
@@ -319,7 +451,7 @@ class ScriptEngine:
             await asyncio.sleep(0.5)
 
     async def _do_map_change(self, step):
-        """Navigate to the next map based on path (direction or mapId)."""
+        """Navigate to the next map based on path (direction, mapId, or coords 'x,y')."""
         if not step.path:
             return
 
@@ -336,6 +468,35 @@ class ScriptEngine:
             if not ok:
                 logger.error(f"[SCRIPT] Map change to {next_map} failed")
             return
+
+        # Coords "x,y" format (e.g. "20,-28")
+        if "," in step.path:
+            target_map = self._resolve_target_map(step.path)
+            if target_map:
+                # Determine direction from current coords to target coords
+                try:
+                    parts = step.path.split(",")
+                    tx, ty = int(parts[0].strip()), int(parts[1].strip())
+                    cx, cy = self.game_state.map.x, self.game_state.map.y
+                    if cx is not None and cy is not None:
+                        dx, dy = tx - cx, ty - cy
+                        if abs(dx) <= 1 and abs(dy) <= 1:
+                            # Adjacent map — use direction-based change
+                            direction = None
+                            if dx == 1:  direction = "right"
+                            elif dx == -1: direction = "left"
+                            elif dy == 1:  direction = "bottom"
+                            elif dy == -1: direction = "top"
+                            if direction:
+                                await self._change_by_direction(direction, step.cell)
+                                return
+                except (ValueError, TypeError):
+                    pass
+                # Fallback: navigate via WorldGraph
+                ok = await self.navigator.travel_to(target_map)
+                if not ok:
+                    logger.error(f"[SCRIPT] Map change to {step.path} failed")
+                return
 
         logger.warn(f"[SCRIPT] Unknown path: {step.path!r}")
 
