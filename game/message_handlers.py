@@ -403,11 +403,17 @@ def handle_map_info(state, data, direction, uid):
         entity = {"id": actor_id, "cell_id": cell_id}
         state.entities[actor_id] = entity
 
-        # Auto-detect our character: positive actorId = player, negative = monster/NPC
-        if actor_id is not None and actor_id < 0x8000000000000000 and not char_id:
-            state.character.id = actor_id
-            char_id = actor_id
-            logger.info(f"  -> Character detected: id={actor_id}")
+        # Auto-detect our character ONLY if we don't have one yet
+        # AND this is the first actor (index 0) with a positive small-ish ID
+        # Don't overwrite if already set from CharacterSelect (jtb) or CharacterLoaded (jrl)
+        if actor_id is not None and not char_id:
+            # Only auto-detect if we have NO character.id at all
+            if state.character.id is None and actor_id < 0x8000000000000000:
+                state.character.id = actor_id
+                char_id = actor_id
+                logger.info(f"  -> Character detected (auto): id={actor_id}")
+            elif state.character.id is not None:
+                char_id = state.character.id
 
         if char_id and actor_id == char_id:
             if cell_id is not None:
@@ -1485,6 +1491,10 @@ def register_all_handlers(game_state):
         # --- Map ---
         "MapComplementaryInformationEvent": handle_map_info,
         "MapCurrentEvent":             handle_map_current,
+        "MapCoordinatesEvent":         handle_map_coordinates,
+        "CurrentCellEvent":            handle_current_cell,
+        "MapCellPropertiesEvent":      handle_kww_pre_map,
+        "MapCellDataEvent":            handle_ial_large_data,
         "MapDataResponse":             handle_map_data_response,
         "InteractiveMapUpdateEvent":   handle_interactive_elements,
 
