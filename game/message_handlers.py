@@ -202,9 +202,11 @@ def handle_character_loaded(state, data, direction, uid):
         else:
             logger.debug(f"    jrl f6={cell_candidate} (NOT a cell, >559)")
 
-    # Try to extract character name from the message
+    # Try to extract character name from multiple sources
     if state.character.name is None:
         _try_extract_character_name(state, data)
+    if state.character.name is None and char_data:
+        _try_extract_character_name(state, char_data)
 
     state.connected = True
     state._connect_time = time.time()
@@ -1114,7 +1116,10 @@ def handle_ioh_map_change(state, data, direction, uid):
     """
     if direction != "c2s":
         return
+    # Any C2S MapChangeRequest is intentional (real client or bot)
+    state._expecting_map_change = True
     if not data:
+        logger.info(f"  -> MAP CHANGE REQUEST")
         return
     fields = _decode(data)
     target_ref = _get_varint(fields, 2)
