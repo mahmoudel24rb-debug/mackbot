@@ -31,7 +31,7 @@ class Navigator:
         self.movement = MovementController(game_state)
         self.world_graph = WorldGraph()
         if self.world_graph.is_loaded():
-            logger.info(f"[NAV] WorldGraph loaded: {len(self.world_graph._graph)} maps")
+            logger.info(f"[NAV] WorldGraph loaded: {len(self.world_graph._adjacency)} maps")
         else:
             logger.warn("[NAV] WorldGraph not loaded — inter-map navigation unavailable")
 
@@ -230,6 +230,8 @@ class Navigator:
 
             await asyncio.sleep(random.uniform(0.3, 1.0))
 
+            # Flag intentional map change so ISU handler doesn't flag as involuntary
+            self.game_state._expecting_map_change = True
             success = await self.movement.request_map_change(target_map_id)
             if not success:
                 logger.warn(f"[NAV] MapChangeRequest failed (attempt {attempt})")

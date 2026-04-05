@@ -143,6 +143,7 @@ class GameState:
         self._needs_cell_update = False  # Set True by iny, cleared by MoveEvent
         self._involuntary_map_change = False
         self._involuntary_from_cell = None
+        self._expecting_map_change = False  # Set True by navigator before intentional map change
         # IAL cell properties for walkability analysis
         self.ial_cell_properties = {}  # cellId -> [f1_values]
         # Load persisted walkable cache
