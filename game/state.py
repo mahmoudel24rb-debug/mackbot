@@ -141,6 +141,8 @@ class GameState:
         self.last_harvest_complete = False  # Set True when kof (InteractiveUseEndedEvent) arrives
         # Cell tracking after map change
         self._needs_cell_update = False  # Set True by iny, cleared by MoveEvent
+        self._involuntary_map_change = False
+        self._involuntary_from_cell = None
         # IAL cell properties for walkability analysis
         self.ial_cell_properties = {}  # cellId -> [f1_values]
         # Load persisted walkable cache

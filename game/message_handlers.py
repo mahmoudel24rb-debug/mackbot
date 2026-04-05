@@ -347,6 +347,14 @@ def handle_map_info(state, data, direction, uid):
     # --- MapId (field 14, fallback field 8) ---
     map_id = _get_varint(fields, 14) or _get_varint(fields, 8)
     if map_id and map_id > 100000:
+        # Detect involuntary map change
+        old_map = state.map.map_id
+        if old_map is not None and old_map != map_id:
+            old_cell = state.character.cell_id
+            logger.warn(f"  -> Map change: {old_map} -> {map_id} (was at cell {old_cell})")
+            state._involuntary_map_change = True
+            state._involuntary_from_cell = old_cell
+
         state.map.map_id = map_id
         state.pos_ref = map_id
         logger.info(f"  -> MapId: {map_id}")

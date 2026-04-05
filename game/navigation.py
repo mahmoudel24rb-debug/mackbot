@@ -124,33 +124,62 @@ class Navigator:
         if current == target_cell:
             return True
 
+        # Clear old occupied cells (entities may have moved)
+        self.grid.occupied.clear()
+
         # Apply walkability to the grid before pathfinding
         source = self._apply_observed_walkability()
         logger.info(f"[NAV] Walkability source: {source}")
 
-        # Find full path using A*
-        full_path = find_path(current, target_cell, self.grid,
-                              stop_adjacent=stop_adjacent)
-        if not full_path:
-            logger.error(f"[NAV] No path: {current} -> {target_cell}")
-            return False
+        # Mark NPC/monster cells as occupied (Jitsuri: "PNJ Occupied cells: ...")
+        occupied = self._get_occupied_cells()
+        for cell_id in occupied:
+            self.grid.set_occupied(cell_id, True)
+        if occupied:
+            logger.info(f"[NAV] PNJ Occupied cells: {', '.join(str(c) for c in sorted(occupied))}")
 
-        logger.info(f"[NAV] Path: {len(full_path)} cells, {current} -> {full_path[-1]}")
+        # Find path with retry on refusal
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            full_path = find_path(current, target_cell, self.grid,
+                                  stop_adjacent=stop_adjacent)
+            if not full_path:
+                logger.error(f"[NAV] No path: {current} -> {target_cell}")
+                return False
 
-        # Send full path in one MoveRequest (like real client: 4-8 keyCells).
-        # KWW walkability ensures paths are valid.
-        ok = await self._send_segment(full_path)
-        if not ok:
-            return False
+            logger.info(f"[NAV] Path: {len(full_path)} cells, {current} -> {full_path[-1]}")
 
-        self.game_state.character.cell_id = full_path[-1]
-        logger.info(f"[NAV] Arrived at cell {full_path[-1]}")
+            ok = await self._send_segment(full_path)
+            if ok:
+                self.game_state.character.cell_id = full_path[-1]
+                logger.info(f"[NAV] Arrived at cell {full_path[-1]}")
+                from game.anti_detect import maybe_pause
+                await maybe_pause()
+                return True
 
-        # Anti-detection: random micro-pause after movement
-        from game.anti_detect import maybe_pause
-        await maybe_pause()
+            if attempt < max_attempts:
+                logger.warn(f"[NAV] Movement refused (attempt {attempt}/{max_attempts}), "
+                            f"retrying with alternative path...")
+                current = self.game_state.character.cell_id
+                if current is None:
+                    return False
+                self.grid.set_occupied(full_path[-1], True)
+                await asyncio.sleep(0.5)
 
+        logger.error(f"[NAV] Movement failed after {max_attempts} attempts")
         return True
+
+    def _get_occupied_cells(self):
+        """Get cells occupied by NPCs and monsters (exclude our character)."""
+        occupied = set()
+        char_id = self.game_state.character.id
+        for eid, entity in self.game_state.entities.items():
+            if char_id and eid == char_id:
+                continue
+            cell_id = entity.get("cell_id") if isinstance(entity, dict) else getattr(entity, "cell_id", None)
+            if cell_id is not None and 0 <= cell_id < 560:
+                occupied.add(cell_id)
+        return occupied
 
     async def _send_segment(self, path):
         """Send a single short movement segment, wait for MoveEvent, then send MoveConfirm."""
@@ -181,46 +210,60 @@ class Navigator:
 
         return True
 
-    async def change_map(self, target_map_id, exit_cell=None):
+    async def change_map(self, target_map_id, exit_cell=None, max_attempts=3):
         """
-        Change to an adjacent map.
-
-        Args:
-            target_map_id: mapId of the destination map
-            exit_cell: cell to walk to before triggering the map change (optional)
-
-        Returns:
-            True if map change completed
+        Change to an adjacent map with retry logic.
+        Tries alternative exit cells if the first attempt fails.
         """
-        # Walk to exit cell first if provided
-        if exit_cell is not None:
-            current = self.game_state.character.cell_id
-            if current != exit_cell:
-                ok = await self.move_to(exit_cell)
-                if not ok:
-                    logger.error(f"[NAV] Can't reach exit cell {exit_cell}")
-                    return False
-
-        # Anti-detection: small delay before map change request
         import random
-        await asyncio.sleep(random.uniform(0.3, 1.0))
 
-        # Send MapChangeRequest with target mapId
-        success = await self.movement.request_map_change(target_map_id)
-        if not success:
-            return False
+        for attempt in range(1, max_attempts + 1):
+            if exit_cell is not None:
+                current = self.game_state.character.cell_id
+                if current != exit_cell:
+                    ok = await self.move_to(exit_cell)
+                    if not ok:
+                        logger.warn(f"[NAV] Can't reach exit cell {exit_cell} "
+                                    f"(attempt {attempt})")
+                        exit_cell = self._find_alternative_exit(target_map_id, exit_cell)
+                        continue
 
-        # Wait for new map data (MapComplementaryInformationEvent)
-        changed = await self.movement.wait_map_change(timeout=15.0)
-        if not changed:
-            logger.warn("[NAV] Map change timed out")
-            return False
+            await asyncio.sleep(random.uniform(0.3, 1.0))
 
-        # Reset grid for the new map
-        self.grid.clear()
-        logger.info(f"[NAV] Arrived at map {self.game_state.map.map_id} "
-                    f"({self.game_state.map.x}, {self.game_state.map.y})")
-        return True
+            success = await self.movement.request_map_change(target_map_id)
+            if not success:
+                logger.warn(f"[NAV] MapChangeRequest failed (attempt {attempt})")
+                continue
+
+            changed = await self.movement.wait_map_change(timeout=10.0)
+            if changed:
+                self.grid.clear()
+                logger.info(f"[NAV] Map change OK (attempt {attempt}): "
+                            f"arrived at {self.game_state.map.map_id} "
+                            f"({self.game_state.map.x}, {self.game_state.map.y})")
+                return True
+
+            logger.warn(f"[NAV] Map change timed out (attempt {attempt}/{max_attempts})")
+            if attempt < max_attempts:
+                exit_cell = self._find_alternative_exit(target_map_id, exit_cell)
+                await asyncio.sleep(1.0)
+
+        logger.error(f"[NAV] Map change to {target_map_id} failed after {max_attempts} attempts")
+        return False
+
+    def _find_alternative_exit(self, target_map_id, failed_cell):
+        """Find an alternative exit cell, excluding the failed one."""
+        if self.world_graph.is_loaded():
+            edges = self.world_graph.get_neighbors(self.game_state.map.map_id)
+            for edge in edges:
+                if edge.get("to_map") == target_map_id and edge.get("cell_id") != failed_cell:
+                    return edge["cell_id"]
+
+        for cell_id, flags in self.grid.map_change_data.items():
+            if cell_id != failed_cell and flags > 0:
+                return cell_id
+
+        return failed_cell
 
     async def move_and_change_map(self, edge_cell, target_map_id):
         """Walk to an edge cell then change map. Kept for compatibility."""

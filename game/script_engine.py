@@ -422,7 +422,7 @@ class ScriptEngine:
         return None
 
     async def _do_gather(self):
-        """Harvest all available resources of the configured types."""
+        """Harvest all available resources. Moves adjacent to each resource first."""
         gs = self.game_state
         if gs.is_busy:
             logger.info("[SCRIPT] Busy, skipping gather")
@@ -441,8 +441,29 @@ class ScriptEngine:
         for res in resources:
             if self._stop_event.is_set():
                 break
-            if not res.available:
+            if not res.available or res.cell_id is None:
                 continue
+
+            # Check for fight interruption
+            if gs.in_fight:
+                logger.info("[SCRIPT] In fight, pausing gather...")
+                while gs.in_fight and not self._stop_event.is_set():
+                    await asyncio.sleep(1.0)
+                logger.info("[SCRIPT] Fight ended, resuming gather")
+                break  # Refresh resources after fight
+
+            # Move adjacent to the resource
+            current = gs.character.cell_id
+            if current is not None:
+                from game.map_grid import get_neighbors
+                adj_cells = [n_id for n_id, _ in get_neighbors(res.cell_id)]
+                if current not in adj_cells:
+                    ok = await self.navigator.move_to(res.cell_id, stop_adjacent=True)
+                    if not ok:
+                        logger.warn(f"[SCRIPT] Can't reach resource {res.element_id} "
+                                    f"at cell {res.cell_id}")
+                        continue
+
             ok = await self.gatherer.gather_resource(res)
             if ok:
                 logger.info(f"[SCRIPT]   Gathered {res.element_id}")
@@ -454,6 +475,14 @@ class ScriptEngine:
         """Navigate to the next map based on path (direction, mapId, or coords 'x,y')."""
         if not step.path:
             return
+
+        # Check for involuntary map change during gather/move
+        if self.game_state._involuntary_map_change:
+            self.game_state._involuntary_map_change = False
+            logger.warn(f"[SCRIPT] Involuntary map change from cell "
+                        f"{self.game_state._involuntary_from_cell} "
+                        f"-> now at {self.game_state.map.map_id}")
+            return  # Don't try to change map again
 
         # Direction string (left/right/top/bottom)
         if step.is_direction:
