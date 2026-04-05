@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 .env
 .idea/
+node_modules/
+package-lock.json
 .vscode/
 *.egg-info/
 dist/

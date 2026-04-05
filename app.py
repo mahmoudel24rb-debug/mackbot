@@ -66,38 +66,50 @@ async def _bot_main(loop):
         await orchestrator.stop()
 
 
-def start_webview():
-    """Open the web frontend in a pywebview window."""
-    import webview
+def start_electron():
+    """Open the web frontend in an Electron window."""
+    import subprocess
 
     # Wait for WebSocket server to be ready
     time.sleep(2)
 
-    # Determine the path to web/index.html
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    npx = "npx.cmd" if sys.platform == "win32" else "npx"
+
+    logger.info("Starting Electron window...")
+    try:
+        proc = subprocess.Popen(
+            [npx, "electron", "."],
+            cwd=project_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        proc.wait()  # Blocks until Electron window is closed
+    except FileNotFoundError:
+        logger.error("Electron not found. Run: npm install electron --save-dev")
+        logger.error("Falling back to browser...")
+        _fallback_browser()
+    except Exception as e:
+        logger.error(f"Electron failed: {e}")
+        _fallback_browser()
+
+
+def _fallback_browser():
+    """Last resort: serve via HTTP and open browser."""
+    import http.server
+    import webbrowser
+    import functools
+
     web_dir = os.path.join(os.path.dirname(__file__), 'web')
-    index_path = os.path.join(web_dir, 'index.html')
-
-    if not os.path.exists(index_path):
-        logger.error(f"Frontend not found: {index_path}")
-        logger.error("Make sure the web/ directory exists with index.html")
-        sys.exit(1)
-
-    # Create the window
-    window = webview.create_window(
-        title=config.UI_TITLE,
-        url=index_path,
-        width=config.UI_WIDTH,
-        height=config.UI_HEIGHT,
-        min_size=(960, 640),
-        background_color='#0f1117',
-        text_select=False,
-    )
-
-    # Start webview (blocks until window is closed)
-    webview.start(
-        debug=False,       # Set True for dev tools (F12)
-        http_server=True,  # Serve files via HTTP (needed for JS/assets)
-    )
+    port = 8080
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=web_dir)
+    server = http.server.HTTPServer(('localhost', port), handler)
+    logger.info(f"Web UI at http://localhost:{port}")
+    webbrowser.open(f"http://localhost:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
 
 
 def main():
@@ -114,8 +126,8 @@ def main():
     )
     bot_thread.start()
 
-    # Open web UI (blocks until window closed)
-    start_webview()
+    # Open Electron window (blocks until closed)
+    start_electron()
 
     logger.info("MackBot stopped.")
 

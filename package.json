@@ -1,0 +1,15 @@
+{
+  "name": "mackbot",
+  "version": "1.0.0",
+  "description": "MackBot — Dofus 3 MITM Bot",
+  "main": "electron-main.js",
+  "scripts": {
+    "electron": "electron .",
+    "start": "python app.py"
+  },
+  "author": "mahmoudel24rb-debug",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^41.1.1"
+  }
+}
