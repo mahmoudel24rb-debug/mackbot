@@ -428,6 +428,11 @@ def handle_map_info(state, data, direction, uid):
             if cell_id is not None:
                 state.character.cell_id = cell_id
                 logger.info(f"  -> Character cell from isu: {cell_id}")
+            # Extract name ONLY for OUR character (char_id is verified)
+            if state.character.name is None:
+                nested = _get_field(actor_fields, 3, WIRE_LENGTH_DELIMITED)
+                if nested:
+                    _try_extract_character_name(state, nested)
 
     # --- Interactive elements (field 2) ---
     interactives = _get_all_fields(fields, 2, WIRE_LENGTH_DELIMITED)
