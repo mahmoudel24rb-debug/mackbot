@@ -56,13 +56,45 @@ async def _bot_main(loop):
     logger.info(f"Bot backend started. WebSocket on ws://localhost:{config.WS_PORT}")
     logger.info("Lancez Dofus...")
 
-    # Keep running — broadcast status periodically to WS clients
+    # Keep running — broadcast status + map data periodically
+    last_map_id = None
     try:
         while True:
             await asyncio.sleep(1)
             if orchestrator.ws_server and orchestrator.ws_server.client_count > 0:
                 status = orchestrator.get_status()
                 await orchestrator.ws_server.broadcast("Status", status)
+
+                # Broadcast MapCellData when map changes
+                gs = orchestrator.game_state
+                current_map = gs.map.map_id
+                if current_map and current_map != last_map_id:
+                    last_map_id = current_map
+                    walkable = getattr(gs, '_walkable_cells', set()) or set()
+                    special = getattr(gs, '_pending_kww_cells', {}) or {}
+                    mc_data = {}
+                    if orchestrator.navigator and orchestrator.navigator.grid:
+                        mc_data = orchestrator.navigator.grid.map_change_data
+                    cells_data = []
+                    for cid in range(560):
+                        cells_data.append({
+                            "cellNumber": cid,
+                            "mov": cid in walkable or not walkable,
+                            "los": cid not in special,
+                            "mapChangeData": mc_data.get(cid, 0),
+                        })
+                    await orchestrator.ws_server.broadcast("MapCellData", {
+                        "cells": cells_data, "mapId": current_map,
+                    })
+                    # Also broadcast entities
+                    ent_list = []
+                    for eid, entity in gs.entities.items():
+                        cell = entity.get("cell_id") if isinstance(entity, dict) else getattr(entity, "cell_id", None)
+                        ent_list.append({"id": eid, "cellId": cell})
+                    await orchestrator.ws_server.broadcast("MapEntities", {
+                        "entities": ent_list,
+                        "characterCellId": gs.character.cell_id,
+                    })
     except asyncio.CancelledError:
         pass
     finally:
